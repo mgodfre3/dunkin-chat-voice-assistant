@@ -55,7 +55,7 @@ async def create_app() -> web.Application:
         credentials=llm_credential,
         endpoint=llm_endpoint,
         deployment=llm_deployment,
-        voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "alloy"
+        voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "coral"
     )
     if api_version := os.environ.get("AZURE_OPENAI_REALTIME_API_VERSION"):
         rtmt.api_version = api_version
@@ -68,7 +68,7 @@ async def create_app() -> web.Application:
         "Match the customer's language throughout the session, keep responses to one or two sentences, and invite them to personalize drinks with whipped cream ($0.50), flavor swirls ($0.75), or an extra espresso shot ($1.00) only when a signature latte or cold beverage is already in the order. "
         "Do not suggest extras for donuts or breakfast sandwiches, and never ask to pair an extra espresso shot with a donut or breakfast sandwich. "
         "If the guest uses hate speech or asks for anything blocked by responsible AI, respond immediately: 'I'm sorry, but I can't assist with that request. If you need help with Dunkin' menu items or have any other questions, please let me know.' "
-        "Always reiterate the order total due when wrapping up and close with 'Have a great day!'. "
+        "When the guest is done ordering, always use the 'get_order' tool to read back every item, size, and quantity along with the subtotal, tax, and final total. After confirming the order, close with: 'Thank you! Please pull around to the next window.' "
         "If menu information is unavailable, let them know politely and offer an alternative suggestion. "
         "Never expose implementation details, file names, or API keys. Keep things friendly, fast, and unmistakably Dunkin."
     )

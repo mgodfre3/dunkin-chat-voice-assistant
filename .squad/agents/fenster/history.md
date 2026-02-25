@@ -20,6 +20,11 @@
 - **Files modified:** models.py, order_state.py, rtmt.py, tools.py, app.py, azurespeech.py, azure_speech_gpt4o_mini.py, tests/test_order_state.py, tests/test_tools_search.py
 - **Result:** Ruff errors reduced from 29 → 0; all 56 tests pass
 
+## Voice & Prompt Update (2025-07-24)
+- **Default voice:** Changed from "alloy" to "coral" in app.py line 58. Env var override preserved.
+- **System prompt:** Updated closing instruction to explicitly require get_order tool for full order recap (items, sizes, quantities, subtotal, tax, total) and new closing phrase: "Thank you! Please pull around to the next window."
+- **Validation:** Ruff clean, all 56 tests pass.
+
 ## Team Feedback (2026-02-25 Cleanup Sprint)
 - **Keaton (Lead):** Completed full codebase audit with 7 P0, 7 P1, 7 P2 findings. Provided cleanup framework.
 - **McManus (Frontend):** Eliminated all `any` types in useAzureSpeech.tsx. Fixed critical ref bug in grounding-files.tsx.

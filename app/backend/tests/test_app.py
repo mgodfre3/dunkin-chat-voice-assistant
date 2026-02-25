@@ -2,7 +2,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -34,6 +34,44 @@ class GetBoolEnvTests(unittest.TestCase):
     def test_default_parameter_defaults_to_false(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertFalse(_get_bool_env("MISSING_VAR"))
+
+
+class CreateAppConfigTests(unittest.IsolatedAsyncioTestCase):
+    """Tests for create_app voice choice and system prompt configuration."""
+
+    async def _run_create_app(self):
+        """Run create_app with mocked Azure services; return (class_mock, instance_mock)."""
+        with patch("app.RTMiddleTier") as mock_cls, \
+             patch("app.attach_tools_rtmt"), \
+             patch.dict(os.environ, {
+                 "RUNNING_IN_PRODUCTION": "1",
+                 "AZURE_OPENAI_EASTUS2_ENDPOINT": "https://fake.openai.azure.com",
+                 "AZURE_OPENAI_REALTIME_DEPLOYMENT": "gpt-4o-realtime",
+                 "AZURE_OPENAI_EASTUS2_API_KEY": "fake-key",
+                 "AZURE_SEARCH_API_KEY": "fake-search-key",
+                 "AZURE_OPENAI_REALTIME_VOICE_CHOICE": "",
+             }):
+            mock_instance = MagicMock()
+            mock_cls.return_value = mock_instance
+            from app import create_app
+            await create_app()
+            return mock_cls, mock_instance
+
+    async def test_default_voice_is_coral(self):
+        mock_cls, _ = await self._run_create_app()
+        _, kwargs = mock_cls.call_args
+        self.assertEqual(kwargs["voice_choice"], "coral")
+
+    async def test_system_prompt_contains_pull_around_to_next_window(self):
+        _, mock_instance = await self._run_create_app()
+        self.assertIn(
+            "Please pull around to the next window",
+            mock_instance.system_message,
+        )
+
+    async def test_system_prompt_contains_get_order_tool_instruction(self):
+        _, mock_instance = await self._run_create_app()
+        self.assertIn("get_order", mock_instance.system_message)
 
 
 if __name__ == "__main__":
