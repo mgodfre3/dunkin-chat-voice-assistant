@@ -1,9 +1,10 @@
-import os
-from dotenv import load_dotenv
-import azure.cognitiveservices.speech as speechsdk
-from openai import AzureOpenAI
 import logging
+import os
 import threading
+
+import azure.cognitiveservices.speech as speechsdk
+from dotenv import load_dotenv
+from openai import AzureOpenAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

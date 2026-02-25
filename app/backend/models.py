@@ -1,5 +1,7 @@
 from pydantic import BaseModel
-from typing import List
+
+__all__ = ["OrderItem", "OrderSummary"]
+
 
 class OrderItem(BaseModel):
     item: str
@@ -7,9 +9,10 @@ class OrderItem(BaseModel):
     quantity: int
     price: float
     display: str
-    
+
+
 class OrderSummary(BaseModel):
-    items: List[OrderItem]
+    items: list[OrderItem]
     total: float
     tax: float
     finalTotal: float

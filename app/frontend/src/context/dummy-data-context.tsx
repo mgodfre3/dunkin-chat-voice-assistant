@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 
 interface DummyDataContextProps {
     useDummyData: boolean;
@@ -7,11 +7,7 @@ interface DummyDataContextProps {
 
 const DummyDataContext = createContext<DummyDataContextProps | undefined>(undefined);
 
-interface DummyDataProviderProps {
-    children: React.ReactNode;
-}
-
-export const DummyDataProvider: React.FC<DummyDataProviderProps> = ({ children }) => {
+export const DummyDataProvider = ({ children }: { children: ReactNode }) => {
     const [useDummyData, setUseDummyData] = useState(() => {
         return localStorage.getItem("useDummyData") === "true";
     });

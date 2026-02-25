@@ -1,17 +1,20 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any
 
 import aiohttp
 from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-from order_state import order_state_singleton, SessionIdentifiers  # Import the order state singleton
+from order_state import SessionIdentifiers, order_state_singleton
 
 logger = logging.getLogger("coffee-chat")
+
+__all__ = ["RTMiddleTier", "RTToolCall", "Tool", "ToolResult", "ToolResultDirection"]
 
 class ToolResultDirection(Enum):
     TO_SERVER = 1
@@ -28,7 +31,7 @@ class ToolResult:
     def to_text(self) -> str:
         if self.text is None:
             return ""
-        return self.text if type(self.text) == str else json.dumps(self.text)
+        return self.text if isinstance(self.text, str) else json.dumps(self.text)
 
 class Tool:
     target: Callable[..., ToolResult]
@@ -49,7 +52,7 @@ class RTToolCall:
 class RTMiddleTier:
     endpoint: str
     deployment: str
-    key: Optional[str] = None
+    key: str | None = None
     
     # Tools are server-side only for now, though the case could be made for client-side tools
     # in addition to server-side tools that are invisible to the client
@@ -57,15 +60,15 @@ class RTMiddleTier:
 
     # Server-enforced configuration, if set, these will override the client's configuration
     # Typically at least the model name and system message will be set by the server
-    model: Optional[str] = None
-    system_message: Optional[str] = None
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
-    disable_audio: Optional[bool] = None
-    voice_choice: Optional[str] = None
+    model: str | None = None
+    system_message: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    disable_audio: bool | None = None
+    voice_choice: str | None = None
     api_version: str = "2024-10-01-preview"
 
-    def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, voice_choice: Optional[str] = None):
+    def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, voice_choice: str | None = None):
         self.endpoint = endpoint
         self.deployment = deployment
         self.voice_choice = voice_choice
@@ -99,7 +102,7 @@ class RTMiddleTier:
             }
         )
 
-    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse) -> Optional[str]:
+    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse) -> str | None:
         message = json.loads(msg.data)
         updated_message = msg.data
         session_id = self._session_map.get(client_ws)
@@ -190,7 +193,7 @@ class RTMiddleTier:
 
         return updated_message
 
-    async def _process_message_to_server(self, msg: str, ws: web.WebSocketResponse) -> Optional[str]:
+    async def _process_message_to_server(self, msg: str, ws: web.WebSocketResponse) -> str | None:
         message = json.loads(msg.data)
         updated_message = msg.data
         if message is not None:
@@ -254,11 +257,11 @@ class RTMiddleTier:
                             if new_msg is not None:
                                 await target_ws.send_str(new_msg)
                         else:
-                            print("Error: unexpected message type:", msg.type)
+                            logger.warning("Unexpected message type from client: %s", msg.type)
                     
                     # Means it is gracefully closed by the client then time to close the target_ws
                     if target_ws:
-                        print("Closing OpenAI's realtime socket connection.")
+                        logger.info("Closing OpenAI's realtime socket connection.")
                         await target_ws.close()
                         
                 async def from_server_to_client():
@@ -268,7 +271,7 @@ class RTMiddleTier:
                             if new_msg is not None:
                                 await ws.send_str(new_msg)
                         else:
-                            print("Error: unexpected message type:", msg.type)
+                            logger.warning("Unexpected message type from server: %s", msg.type)
 
                 try:
                     await asyncio.gather(from_client_to_server(), from_server_to_client())
@@ -293,5 +296,5 @@ class RTMiddleTier:
         await self._forward_messages(ws)
         return ws
     
-    def attach_to_app(self, app, path):
+    def attach_to_app(self, app: web.Application, path: str) -> None:
         app.router.add_get(path, self._websocket_handler)

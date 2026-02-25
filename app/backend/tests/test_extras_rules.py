@@ -95,6 +95,161 @@ class ExtrasRuleTests(unittest.TestCase):
         self.assertEqual(summary.items[0].item, "Bacon Egg & Cheese on Croissant")
         self.assertTrue(math.isclose(summary.total, 4.99, rel_tol=1e-9))
 
+    # ── Additional extras scenarios ──
+
+    def test_allow_extra_with_cold_brew(self):
+        """Extras should be allowed when a cold beverage is in the order."""
+        session_id = order_state_singleton.create_session()
+        self._add_item(session_id, "Original Cold Brew", "large", 1, 3.99)
+
+        result = asyncio.run(
+            update_order(
+                {
+                    "action": "add",
+                    "item_name": "Extra Espresso Shot",
+                    "size": "standard",
+                    "quantity": 1,
+                    "price": 1.0,
+                },
+                session_id,
+            )
+        )
+        self.assertEqual(result.destination, ToolResultDirection.TO_CLIENT)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(len(summary.items), 2)
+
+    def test_allow_extra_when_mixed_order_has_latte(self):
+        """Extras allowed when order has both a donut AND a latte."""
+        session_id = order_state_singleton.create_session()
+        self._add_item(session_id, "Glazed Donut", "standard", 1, 1.49)
+        self._add_item(session_id, "Caramel Craze Latte", "medium", 1, 4.99)
+
+        result = asyncio.run(
+            update_order(
+                {
+                    "action": "add",
+                    "item_name": "Flavor Swirl",
+                    "size": "standard",
+                    "quantity": 1,
+                    "price": 0.75,
+                },
+                session_id,
+            )
+        )
+        self.assertEqual(result.destination, ToolResultDirection.TO_CLIENT)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(len(summary.items), 3)
+
+    def test_block_extra_with_only_multiple_donuts(self):
+        """Even multiple donuts should not unlock extras."""
+        session_id = order_state_singleton.create_session()
+        self._add_item(session_id, "Glazed Donut", "standard", 3, 1.49)
+        self._add_item(session_id, "Everything Bagel", "standard", 1, 2.49)
+
+        result = asyncio.run(
+            update_order(
+                {
+                    "action": "add",
+                    "item_name": "Extra Shot",
+                    "size": "standard",
+                    "quantity": 1,
+                    "price": 1.0,
+                },
+                session_id,
+            )
+        )
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertIn("extras", result.text.lower())
+
+    def test_allow_extra_with_multiple_beverages(self):
+        """Multiple beverages in the order — extras should still be allowed."""
+        session_id = order_state_singleton.create_session()
+        self._add_item(session_id, "Caramel Craze Latte", "small", 1, 3.99)
+        self._add_item(session_id, "Original Cold Brew", "large", 1, 3.99)
+
+        result = asyncio.run(
+            update_order(
+                {
+                    "action": "add",
+                    "item_name": "Whipped Cream",
+                    "size": "standard",
+                    "quantity": 1,
+                    "price": 0.5,
+                },
+                session_id,
+            )
+        )
+        self.assertEqual(result.destination, ToolResultDirection.TO_CLIENT)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(len(summary.items), 3)
+
+    def test_block_extra_message_differs_with_blocked_base(self):
+        """When order has only blocked-category items, the apology should mention them."""
+        session_id = order_state_singleton.create_session()
+        self._add_item(session_id, "Glazed Donut", "standard", 1, 1.49)
+
+        result = asyncio.run(
+            update_order(
+                {
+                    "action": "add",
+                    "item_name": "Flavor Swirl",
+                    "size": "standard",
+                    "quantity": 1,
+                    "price": 0.75,
+                },
+                session_id,
+            )
+        )
+        self.assertEqual(result.destination, ToolResultDirection.TO_SERVER)
+        self.assertIn("can't add them", result.text.lower())
+
+    def test_non_extra_item_always_allowed(self):
+        """Non-extra items should always be addable regardless of order contents."""
+        session_id = order_state_singleton.create_session()
+        self._add_item(session_id, "Glazed Donut", "standard", 1, 1.49)
+
+        result = asyncio.run(
+            update_order(
+                {
+                    "action": "add",
+                    "item_name": "Caramel Craze Latte",
+                    "size": "medium",
+                    "quantity": 1,
+                    "price": 4.99,
+                },
+                session_id,
+            )
+        )
+        self.assertEqual(result.destination, ToolResultDirection.TO_CLIENT)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(len(summary.items), 2)
+
+    def test_remove_action_bypasses_extra_check(self):
+        """Removing an extra should work even without a qualifying beverage."""
+        session_id = order_state_singleton.create_session()
+        self._add_item(session_id, "Caramel Craze Latte", "medium", 1, 4.99)
+        self._add_item(session_id, "Extra Espresso Shot", "standard", 1, 1.0)
+
+        # Now remove the latte, leaving only the extra
+        order_state_singleton.handle_order_update(session_id, "remove", "Caramel Craze Latte", "medium", 1, 4.99)
+
+        # Removing the extra should still work (remove is not gated)
+        result = asyncio.run(
+            update_order(
+                {
+                    "action": "remove",
+                    "item_name": "Extra Espresso Shot",
+                    "size": "standard",
+                    "quantity": 1,
+                    "price": 1.0,
+                },
+                session_id,
+            )
+        )
+        self.assertEqual(result.destination, ToolResultDirection.TO_CLIENT)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(len(summary.items), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

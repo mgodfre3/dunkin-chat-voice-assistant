@@ -1,0 +1,9 @@
+[
+  {
+    "assignment_id": "dunkin-voice-chat-001",
+    "universe": "the-usual-suspects",
+    "created_at": "2026-02-25T14:32:52Z",
+    "agents": ["Keaton", "McManus", "Fenster", "Hockney"],
+    "reason": "Full-stack cleanup and modernization project — 4 core agents for lead, frontend, backend, and testing"
+  }
+]

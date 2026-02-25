@@ -8,6 +8,8 @@ import GroundingFile from "./grounding-file";
 
 import { GroundingFile as GroundingFileType, HistoryItem } from "@/types";
 
+const MemoizedGroundingFile = memo(GroundingFile);
+
 type Properties = {
     history: HistoryItem[];
     show: boolean;
@@ -50,8 +52,6 @@ const HistoryPanel = ({ show, history, onClosed, onSelectedGroundingFile }: Prop
 
         return diff > 60; // Show timestamp if more than 60 seconds have passed
     };
-
-    const MemoizedGroundingFile = memo(GroundingFile);
 
     return (
         <AnimatePresence>

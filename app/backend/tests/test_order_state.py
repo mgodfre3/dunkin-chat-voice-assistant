@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from order_state import order_state_singleton, SessionIdentifiers
+from order_state import SessionIdentifiers, order_state_singleton
 
 
 class OrderStateTests(unittest.TestCase):
@@ -76,6 +76,105 @@ class OrderStateTests(unittest.TestCase):
         identifiers_two = order_state_singleton.get_session_identifiers(session_two)
 
         self.assertNotEqual(identifiers_one.session_token, identifiers_two.session_token)
+
+    # ── Edge cases added below ──
+
+    def test_delete_session_removes_state(self):
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "add", "Glazed Donut", "standard", 1, 1.49)
+        order_state_singleton.delete_session(session_id)
+        self.assertNotIn(session_id, order_state_singleton.sessions)
+
+    def test_delete_nonexistent_session_is_safe(self):
+        order_state_singleton.delete_session("nonexistent-id")
+
+    def test_concurrent_sessions_are_independent(self):
+        s1 = order_state_singleton.create_session()
+        s2 = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(s1, "add", "Glazed Donut", "standard", 2, 1.49)
+        order_state_singleton.handle_order_update(s2, "add", "Cold Brew", "large", 1, 3.99)
+
+        summary1 = order_state_singleton.get_order_summary(s1)
+        summary2 = order_state_singleton.get_order_summary(s2)
+
+        self.assertEqual(len(summary1.items), 1)
+        self.assertEqual(summary1.items[0].item, "Glazed Donut")
+        self.assertEqual(len(summary2.items), 1)
+        self.assertEqual(summary2.items[0].item, "Cold Brew")
+
+    def test_round_trip_token_format(self):
+        session_id = order_state_singleton.create_session()
+        ids = order_state_singleton.get_session_identifiers(session_id)
+        self.assertRegex(ids.round_trip_token, r"^.+-0000$")
+
+        for i in range(1, 4):
+            ids = order_state_singleton.advance_round_trip(session_id)
+            self.assertEqual(ids.round_trip_index, i)
+            self.assertTrue(ids.round_trip_token.endswith(f"-{i:04d}"))
+
+    def test_multiple_round_trip_advances_maintain_session_token(self):
+        session_id = order_state_singleton.create_session()
+        ids_initial = order_state_singleton.get_session_identifiers(session_id)
+        for _ in range(5):
+            ids = order_state_singleton.advance_round_trip(session_id)
+        self.assertEqual(ids.session_token, ids_initial.session_token)
+        self.assertEqual(ids.round_trip_index, 5)
+
+    def test_remove_item_decreases_quantity(self):
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "add", "Glazed Donut", "standard", 3, 1.49)
+        order_state_singleton.handle_order_update(session_id, "remove", "Glazed Donut", "standard", 1, 1.49)
+
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(len(summary.items), 1)
+        self.assertEqual(summary.items[0].quantity, 2)
+
+    def test_remove_item_fully_removes_when_quantity_matches(self):
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "add", "Glazed Donut", "standard", 2, 1.49)
+        order_state_singleton.handle_order_update(session_id, "remove", "Glazed Donut", "standard", 2, 1.49)
+
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(len(summary.items), 0)
+        self.assertAlmostEqual(summary.total, 0.0)
+
+    def test_remove_nonexistent_item_is_noop(self):
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "remove", "Phantom Item", "large", 1, 9.99)
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(len(summary.items), 0)
+
+    def test_add_duplicate_item_increments_quantity(self):
+        session_id = order_state_singleton.create_session()
+        order_state_singleton.handle_order_update(session_id, "add", "Cold Brew", "large", 1, 3.99)
+        order_state_singleton.handle_order_update(session_id, "add", "Cold Brew", "large", 2, 3.99)
+
+        summary = order_state_singleton.get_order_summary(session_id)
+        self.assertEqual(len(summary.items), 1)
+        self.assertEqual(summary.items[0].quantity, 3)
+
+    def test_display_formatting_for_various_sizes(self):
+        _session_id = order_state_singleton.create_session()
+        cases = [
+            ("Latte", "small", "Small Latte"),
+            ("Latte", "medium", "Medium Latte"),
+            ("Latte", "large", "Large Latte"),
+            ("Cold Brew", "kannchen", "Kannchen of Cold Brew"),
+            ("Cold Brew", "pot", "Pot of Cold Brew"),
+            ("Donut", "standard", "Donut"),
+            ("Donut", "n/a", "Donut"),
+            ("Donut", "na", "Donut"),
+            ("Donut", "none", "Donut"),
+            ("Donut", "", "Donut"),
+            ("Donut", "n.a.", "Donut"),
+        ]
+        for item, size, expected_display in cases:
+            order_state_singleton.sessions = {}
+            sid = order_state_singleton.create_session()
+            order_state_singleton.handle_order_update(sid, "add", item, size, 1, 1.0)
+            summary = order_state_singleton.get_order_summary(sid)
+            self.assertEqual(summary.items[0].display, expected_display,
+                             f"Failed for size='{size}': expected '{expected_display}'")
 
 
 if __name__ == "__main__":

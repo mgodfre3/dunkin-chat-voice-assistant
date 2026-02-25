@@ -1,10 +1,12 @@
 import axios from "axios";
 
+import { ExtensionMiddleTierToolResponse } from "@/types";
+
 interface Parameters {
-    onReceivedToolResponse?: (response: any) => void;
-    onSpeechToTextTranscriptionCompleted?: (message: any) => void;
-    onModelResponseDone?: (message: any) => void;
-    onError?: (error: any) => void;
+    onReceivedToolResponse?: (response: ExtensionMiddleTierToolResponse) => void;
+    onSpeechToTextTranscriptionCompleted?: (message: { transcript: string }) => void;
+    onModelResponseDone?: (message: { response: { output: Array<{ content?: Array<{ transcript: string }> }> } }) => void;
+    onError?: (error: unknown) => void;
 }
 
 const useAzureSpeech = ({ onSpeechToTextTranscriptionCompleted, onModelResponseDone, onError }: Parameters) => {
