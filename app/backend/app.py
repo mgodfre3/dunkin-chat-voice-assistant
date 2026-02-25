@@ -7,9 +7,8 @@ from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 
-from tools import attach_tools_rtmt
 from rtmt import RTMiddleTier
-
+from tools import attach_tools_rtmt
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,7 +22,7 @@ def _get_bool_env(variable_name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-async def create_app():
+async def create_app() -> web.Application:
     """Configure and return the aiohttp application for realtime ordering."""
 
     if not _get_bool_env("RUNNING_IN_PRODUCTION", False):
@@ -95,6 +94,7 @@ async def create_app():
     app.router.add_static('/', path=current_directory / 'static', name='static')
 
     return app
+
 
 if __name__ == "__main__":
     host = os.environ.get("HOST", "localhost")  # Change default host to localhost

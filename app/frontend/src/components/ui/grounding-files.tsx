@@ -49,7 +49,7 @@ export function GroundingFiles({ files, onSelected }: Properties) {
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.3 }}
-                        className={`h-full ${isAnimating ? "overflow-hidden" : "overflow-y-auto"}`}
+                        className={`h-full ${isAnimating.current ? "overflow-hidden" : "overflow-y-auto"}`}
                         onLayoutAnimationStart={() => (isAnimating.current = true)}
                         onLayoutAnimationComplete={() => (isAnimating.current = false)}
                     >

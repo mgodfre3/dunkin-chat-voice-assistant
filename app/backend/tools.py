@@ -13,8 +13,9 @@ from azure.search.documents.models import VectorizableTextQuery
 from order_state import order_state_singleton
 from rtmt import RTMiddleTier, Tool, ToolResult, ToolResultDirection
 
-
 logger = logging.getLogger(__name__)
+
+__all__ = ["attach_tools_rtmt"]
 
 
 # Extras may only be applied to specific beverage categories.
@@ -86,15 +87,7 @@ def _infer_category(item_name: str) -> str:
     return ""
 
 
-""""
-Purpose of the Tool:
-    Knowledge Base Search:
-        Enable GPT-4o to search the knowledge base for information on beverages, including categories, names, descriptions, origins, caffeine content, brewing methods, popularity, and sizes.
-    User Interaction:
-        Provide users with detailed information about beverages, including categories, names, descriptions, origins, caffeine content, brewing methods, popularity, and sizes.
-    Error Prevention:
-        Prevent hallucination by ensuring that all information provided to the user is sourced from the knowledge base.
-"""
+
 search_tool_schema = {
     "type": "function",
     "name": "search",
@@ -187,16 +180,6 @@ async def search(
     return ToolResult(joined_results or "No matching menu entries found.", ToolResultDirection.TO_SERVER)
 
 
-
-"""
-Purpose of the Tool:
-    Order Management:
-        Enable GPT-4o to update the current order by adding or removing items based on user requests.
-    State Management:
-        Update the current order state, in both the frontend (UI) and backend, by adding or removing items based on user requests.
-    User Interaction:
-        Provide users with a seamless ordering experience by accurately updating their orders based on their requests.
-"""
 update_order_tool_schema = {
     "type": "function",
     "name": "update_order",
@@ -278,15 +261,6 @@ async def update_order(args, session_id: str) -> ToolResult:
     return ToolResult(json_order_summary, ToolResultDirection.TO_CLIENT)
 
 
-"""
-Purpose of the Tool:
-    Order Summary Retrieval:
-        Retrieve the current order summary to provide the user with a concise overview of their order.
-    State Management:
-        Retrieve the current order state from the backend to display the items, total, tax, and final total.
-    User Interaction:
-        Enable GPT-4o to communicate the order summary to the user in a clear and concise manner.
-"""
 get_order_tool_schema = {
     "type": "function",
     "name": "get_order",
@@ -299,7 +273,7 @@ get_order_tool_schema = {
     }
 }
 
-async def get_order(session_id: str) -> ToolResult:
+async def get_order(_args: Any, session_id: str) -> ToolResult:
     """Retrieve the current order summary."""
 
     logger.info("Retrieving order summary for session %s", session_id)
@@ -307,17 +281,19 @@ async def get_order(session_id: str) -> ToolResult:
     return ToolResult(order_summary.model_dump_json(), ToolResultDirection.TO_SERVER)
 
 
-# Attach tools to the RTMiddleTier instance
-def attach_tools_rtmt(rtmt: RTMiddleTier,
+def attach_tools_rtmt(
+    rtmt: RTMiddleTier,
     credentials: AzureKeyCredential | DefaultAzureCredential,
-    search_endpoint: str, search_index: str,
+    search_endpoint: str,
+    search_index: str,
     semantic_configuration: str,
     identifier_field: str,
     content_field: str,
     embedding_field: str,
     title_field: str,
-    use_vector_query: bool
-    ) -> None:
+    use_vector_query: bool,
+) -> None:
+    """Attach search and order tools to the RTMiddleTier instance."""
 
     if not isinstance(credentials, AzureKeyCredential):
         credentials.get_token("https://search.azure.com/.default")  # warm up prior to first call
@@ -325,6 +301,6 @@ def attach_tools_rtmt(rtmt: RTMiddleTier,
 
     rtmt.tools["search"] = Tool(schema=search_tool_schema, target=lambda args: search(search_client, semantic_configuration, identifier_field, content_field, embedding_field, use_vector_query, args))
     rtmt.tools["update_order"] = Tool(schema=update_order_tool_schema, target=lambda args, session_id: update_order(args, session_id))
-    rtmt.tools["get_order"] = Tool(schema=get_order_tool_schema, target=lambda _, session_id: get_order(session_id))
+    rtmt.tools["get_order"] = Tool(schema=get_order_tool_schema, target=lambda args, session_id: get_order(args, session_id))
 
 

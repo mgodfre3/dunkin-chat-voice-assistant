@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import menuItemsData from "@/data/menuItems.json";
 
 interface Size {
@@ -25,13 +24,9 @@ const categoryIcons: Record<string, string> = {
     Extras: "✨"
 };
 
-export default function MenuPanel() {
-    const [menuItems, setMenuItems] = useState<MenuCategory[]>([]);
+const menuItems = menuItemsData.menuItems as MenuCategory[];
 
-    useEffect(() => {
-        // Load menu items from JSON file
-        setMenuItems(menuItemsData.menuItems as MenuCategory[]);
-    }, []);
+export default function MenuPanel() {
 
     return (
         <div className="space-y-8">
@@ -49,7 +44,6 @@ export default function MenuPanel() {
                                 <h3 className="break-keep font-semibold uppercase tracking-wide text-primary dark:text-primary">
                                     {category.category}
                                 </h3>
-                                <p className="text-xs text-muted-foreground"></p>
                             </div>
                         </div>
                         <span className="whitespace-nowrap rounded-full bg-[#FFEBD2] px-3 py-1 text-xs font-bold text-[#C14200] dark:bg-[#2b1a13] dark:text-[#FFB38F]">

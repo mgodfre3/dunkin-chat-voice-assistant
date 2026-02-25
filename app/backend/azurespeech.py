@@ -1,10 +1,16 @@
-import os
 import logging
+import os
+
 from aiohttp import web
-from azure.cognitiveservices.speech import SpeechConfig, SpeechRecognizer, SpeechSynthesizer, AudioConfig, SpeechConfig, ResultReason
-from azure.cognitiveservices.speech.audio import AudioConfig
-from openai import AzureOpenAI
+from azure.cognitiveservices.speech import (
+    AudioConfig,
+    ResultReason,
+    SpeechConfig,
+    SpeechRecognizer,
+    SpeechSynthesizer,
+)
 from dotenv import load_dotenv
+from openai import AzureOpenAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

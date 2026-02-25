@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Mic, MicOff, Menu, MessageSquare, LogOut, Github } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -11,8 +11,6 @@ import MenuPanel from "@/components/ui/menu-panel";
 import OrderSummary, { calculateOrderSummary, OrderSummaryProps } from "@/components/ui/order-summary";
 import TranscriptPanel from "@/components/ui/transcript-panel";
 import Settings from "@/components/ui/settings";
-// import ImageDialog from "@/components/ui/ImageDialog";
-
 import useRealTime from "@/hooks/useRealtime";
 import useAzureSpeech from "@/hooks/useAzureSpeech";
 import useAudioRecorder from "@/hooks/useAudioRecorder";
@@ -69,15 +67,15 @@ function CoffeeApp() {
     const { theme } = useTheme();
     const { logout, authEnabled } = useAuth();
 
-    const [transcripts, setTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>(() => {
-        return [];
-    });
-    const [dummyTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>(() => {
-        return dummyTranscriptsData.map(transcript => ({
-            ...transcript,
-            timestamp: new Date(transcript.timestamp)
-        }));
-    });
+    const [transcripts, setTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>([]);
+    const dummyTranscripts = useMemo<Array<{ text: string; isUser: boolean; timestamp: Date }>>(
+        () =>
+            dummyTranscriptsData.map(transcript => ({
+                ...transcript,
+                timestamp: new Date(transcript.timestamp)
+            })),
+        []
+    );
 
     const initialOrder: OrderSummaryProps = {
         items: [],
@@ -191,7 +189,7 @@ function CoffeeApp() {
                 console.log("Final Total:", orderSummary.finalTotal);
             }
         },
-        onSpeechToTextTranscriptionCompleted: (message: { transcript: any }) => {
+        onSpeechToTextTranscriptionCompleted: (message: { transcript: string }) => {
             const newTranscriptItem = {
                 text: message.transcript,
                 isUser: true,
@@ -199,9 +197,9 @@ function CoffeeApp() {
             };
             setTranscripts(prev => [...prev, newTranscriptItem]);
         },
-        onModelResponseDone: (message: { response: { output: any[] } }) => {
+        onModelResponseDone: (message: { response: { output: Array<{ content?: Array<{ transcript: string }> }> } }) => {
             const transcript = message.response.output
-                .map(output => output.content?.map((content: { transcript: any }) => content.transcript).join(" "))
+                .map(output => output.content?.map(content => content.transcript).join(" "))
                 .join(" ");
             if (!transcript) return;
 
@@ -212,7 +210,7 @@ function CoffeeApp() {
             };
             setTranscripts(prev => [...prev, newTranscriptItem]);
         },
-        onError: (error: any) => console.error("Error:", error)
+        onError: (error: unknown) => console.error("Error:", error)
     });
 
     const { reset: resetAudioPlayer, play: playAudio, stop: stopAudioPlayer, waitForDrain: waitForAudioDrain } =
@@ -399,8 +397,6 @@ function CoffeeApp() {
                     themes are solely for demonstration and do not represent an official product.
                 </p>
             </footer>
-            {/* <Button onClick={() => onUserRequestShowImage("Espresso")}>Show Espresso Image</Button>
-            {imageDialogOpen && <ImageDialog imageUrl={imageUrl} onClose={() => setImageDialogOpen(false)} />} */}
         </div>
     );
 }
