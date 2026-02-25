@@ -19,3 +19,8 @@
 - **Test files had pre-existing issues:** unused imports in test_tools_search.py, unused variable in test_order_state.py — cleaned up
 - **Files modified:** models.py, order_state.py, rtmt.py, tools.py, app.py, azurespeech.py, azure_speech_gpt4o_mini.py, tests/test_order_state.py, tests/test_tools_search.py
 - **Result:** Ruff errors reduced from 29 → 0; all 56 tests pass
+
+## Team Feedback (2026-02-25 Cleanup Sprint)
+- **Keaton (Lead):** Completed full codebase audit with 7 P0, 7 P1, 7 P2 findings. Provided cleanup framework.
+- **McManus (Frontend):** Eliminated all `any` types in useAzureSpeech.tsx. Fixed critical ref bug in grounding-files.tsx.
+- **Hockney (Tester):** Expanded backend test suite 9→56 tests. All passing. Comprehensive model and utility coverage.

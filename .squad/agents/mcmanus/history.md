@@ -21,3 +21,8 @@
 - **Unused import removed:** `render, screen` import cleaned from `calculate-order-summary.test.tsx` (pure logic test, no DOM rendering).
 - **Files modified:** `index.tsx`, `App.tsx`, `useAzureSpeech.tsx`, `dummy-data-context.tsx`, `menu-panel.tsx`, `grounding-files.tsx`, `history-panel.tsx`, `calculate-order-summary.test.tsx`
 - **Build:** `tsc -b && vite build` passes. **Tests:** All 13 tests pass.
+
+## Team Feedback (2026-02-25 Cleanup Sprint)
+- **Keaton (Lead):** Identified critical ref bug in grounding-files.tsx and comprehensive cleanup roadmap.
+- **Fenster (Backend):** Modernized backend to Python 3.11+. All 56 tests pass. No behavioral changes.
+- **Hockney (Tester):** Expanded frontend test suite 4→13 tests. All passing. Comprehensive component coverage.
