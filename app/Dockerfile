@@ -31,7 +31,7 @@ ENV PYTHONUNBUFFERED=1
 RUN python -m pip install -r requirements.txt
 
 # Pre-build ChromaDB data from menu items (local vector search)
-COPY ../scripts/ingest_menu_local.py /tmp/ingest_menu_local.py
+COPY ./ingest_menu_local.py /tmp/ingest_menu_local.py
 ENV CHROMA_DATA_PATH=/app/chroma_data
 ENV CHROMA_COLLECTION_NAME=menu_items
 ENV MENU_ITEMS_PATH=/app/data/menuItems.json
