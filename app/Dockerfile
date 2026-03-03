@@ -30,6 +30,13 @@ ENV PYTHONUNBUFFERED=1
 
 RUN python -m pip install -r requirements.txt
 
+# Pre-build ChromaDB data from menu items (local vector search)
+COPY ../scripts/ingest_menu_local.py /tmp/ingest_menu_local.py
+ENV CHROMA_DATA_PATH=/app/chroma_data
+ENV CHROMA_COLLECTION_NAME=menu_items
+ENV MENU_ITEMS_PATH=/app/data/menuItems.json
+RUN python /tmp/ingest_menu_local.py && rm /tmp/ingest_menu_local.py
+
 # Copy the freshly-built frontend assets last so they are not overwritten by the backend source copy.
 COPY --from=build-stage /backend/static /app/static
 

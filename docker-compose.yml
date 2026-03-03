@@ -1,0 +1,21 @@
+version: "3.9"
+services:
+  dunkin-voice-assistant:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./app/backend/.env
+    environment:
+      - RUNNING_IN_PRODUCTION=false
+      - CHROMA_DATA_PATH=/app/chroma_data
+      - CHROMA_COLLECTION_NAME=menu_items
+    volumes:
+      # Mount ChromaDB data for persistence across restarts (optional — data is baked into image)
+      - chroma_data:/app/chroma_data
+    restart: unless-stopped
+
+volumes:
+  chroma_data:

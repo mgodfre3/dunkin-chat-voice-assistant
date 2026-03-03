@@ -4,11 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from azure.core.credentials import AzureKeyCredential
-from azure.core.exceptions import HttpResponseError
-from azure.identity import DefaultAzureCredential
-from azure.search.documents.aio import SearchClient
-from azure.search.documents.models import VectorizableTextQuery
+import chromadb
 
 from order_state import order_state_singleton
 from rtmt import RTMiddleTier, Tool, ToolResult, ToolResultDirection
@@ -108,75 +104,37 @@ search_tool_schema = {
 }
 
 async def search(
-    search_client: SearchClient,
-    semantic_configuration: str,
-    identifier_field: str,
-    content_field: str,
-    embedding_field: str,
-    use_vector_query: bool,
+    collection: chromadb.Collection,
     args: Any,
 ) -> ToolResult:
-    """Execute a hybrid Azure AI Search query with safe fallbacks."""
+    """Execute a local ChromaDB vector search query."""
 
     query = args["query"]
     logger.info("Knowledge search requested for query '%s'", query)
 
-    vector_queries = []
-    if use_vector_query and embedding_field:
-        vector_queries.append(VectorizableTextQuery(text=query, k_nearest_neighbors=50, fields=embedding_field))
-
-    select_fields = {
-        identifier_field or "id",
-        content_field or "content",
-        "category",
-        "name",
-        "description",
-        "longDescription",
-        "origin",
-        "caffeineContent",
-        "brewingMethod",
-        "popularity",
-        "sizes",
-    }
-
     try:
-        search_results = await search_client.search(
-            search_text=query,
-            query_type="semantic",
-            semantic_configuration_name=semantic_configuration,
-            top=5,
-            vector_queries=vector_queries or None,
-            select=list(select_fields),
+        results = collection.query(
+            query_texts=[query],
+            n_results=5,
+            include=["documents", "metadatas"],
         )
-    except HttpResponseError as exc:
-        # Gracefully handle schema/field mismatches (e.g., invalid $select fields) by retrying with a minimal projection.
-        if "Could not find a property named" in str(exc):
-            logger.warning("Retrying search with minimal fields after select mismatch: %s", exc)
-            fallback_select = [identifier_field or "id", content_field or "description"]
-            search_results = await search_client.search(
-                search_text=query,
-                query_type="semantic",
-                semantic_configuration_name=semantic_configuration,
-                top=5,
-                vector_queries=vector_queries or None,
-                select=[f for f in fallback_select if f],
+    except Exception as exc:
+        logger.error("ChromaDB search failed: %s", exc)
+        return ToolResult("I'm sorry, I can't reach our menu data right now.", ToolResultDirection.TO_SERVER)
+
+    formatted = []
+    if results and results.get("ids") and results["ids"][0]:
+        for i, doc_id in enumerate(results["ids"][0]):
+            meta = results["metadatas"][0][i] if results["metadatas"] else {}
+            summary = (
+                f"[{doc_id}]: "
+                f"Name: {meta.get('name', 'N/A')}, Category: {meta.get('category', 'N/A')}, "
+                f"Description: {meta.get('description', 'N/A')}, Sizes: {meta.get('sizes', 'N/A')}"
             )
-        else:
-            logger.error("Azure AI Search request failed: %s", exc)
-            return ToolResult("I'm sorry, I can't reach our menu data right now.", ToolResultDirection.TO_SERVER)
+            formatted.append(summary)
 
-    results = []
-    async for record in search_results:
-        identifier = record.get(identifier_field) or record.get("id", "unknown")
-        summary = (
-            f"[{identifier}]: "
-            f"Name: {record.get('name', 'N/A')}, Category: {record.get('category', 'N/A')}, "
-            f"Description: {record.get('description', 'N/A')}, Sizes: {record.get('sizes', 'N/A')}"
-        )
-        results.append(summary)
-
-    joined_results = "\n-----\n".join(results)
-    logger.debug("Search results returned %d documents", len(results))
+    joined_results = "\n-----\n".join(formatted)
+    logger.debug("Search results returned %d documents", len(formatted))
     return ToolResult(joined_results or "No matching menu entries found.", ToolResultDirection.TO_SERVER)
 
 
@@ -283,23 +241,11 @@ async def get_order(_args: Any, session_id: str) -> ToolResult:
 
 def attach_tools_rtmt(
     rtmt: RTMiddleTier,
-    credentials: AzureKeyCredential | DefaultAzureCredential,
-    search_endpoint: str,
-    search_index: str,
-    semantic_configuration: str,
-    identifier_field: str,
-    content_field: str,
-    embedding_field: str,
-    title_field: str,
-    use_vector_query: bool,
+    chroma_collection: chromadb.Collection,
 ) -> None:
     """Attach search and order tools to the RTMiddleTier instance."""
 
-    if not isinstance(credentials, AzureKeyCredential):
-        credentials.get_token("https://search.azure.com/.default")  # warm up prior to first call
-    search_client = SearchClient(search_endpoint, search_index, credentials, user_agent="RTMiddleTier")
-
-    rtmt.tools["search"] = Tool(schema=search_tool_schema, target=lambda args: search(search_client, semantic_configuration, identifier_field, content_field, embedding_field, use_vector_query, args))
+    rtmt.tools["search"] = Tool(schema=search_tool_schema, target=lambda args: search(chroma_collection, args))
     rtmt.tools["update_order"] = Tool(schema=update_order_tool_schema, target=lambda args, session_id: update_order(args, session_id))
     rtmt.tools["get_order"] = Tool(schema=get_order_tool_schema, target=lambda args, session_id: get_order(args, session_id))
 

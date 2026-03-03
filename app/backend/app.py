@@ -2,6 +2,7 @@ import logging
 import os
 from pathlib import Path
 
+import chromadb
 from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
@@ -35,10 +36,9 @@ async def create_app() -> web.Application:
         raise RuntimeError("Azure OpenAI realtime endpoint and deployment must be configured.")
 
     llm_key = os.environ.get("AZURE_OPENAI_EASTUS2_API_KEY")
-    search_key = os.environ.get("AZURE_SEARCH_API_KEY")
 
     credential = None
-    if not llm_key or not search_key:
+    if not llm_key:
         if tenant_id := os.environ.get("AZURE_TENANT_ID"):
             logger.info("Using AzureDeveloperCliCredential with tenant_id %s", tenant_id)
             credential = AzureDeveloperCliCredential(tenant_id=tenant_id, process_timeout=60)
@@ -47,7 +47,6 @@ async def create_app() -> web.Application:
             credential = DefaultAzureCredential()
 
     llm_credential = AzureKeyCredential(llm_key) if llm_key else credential
-    search_credential = AzureKeyCredential(search_key) if search_key else credential
 
     app = web.Application()
 
@@ -73,19 +72,14 @@ async def create_app() -> web.Application:
         "Never expose implementation details, file names, or API keys. Keep things friendly, fast, and unmistakably Dunkin."
     )
 
-    attach_tools_rtmt(
-        rtmt,
-        credentials=search_credential,
-        search_endpoint=os.environ.get("AZURE_SEARCH_ENDPOINT"),
-        search_index=os.environ.get("AZURE_SEARCH_INDEX"),
-        # Defaults aligned with the menu ingestion index schema; override via env vars as needed.
-        semantic_configuration=os.environ.get("AZURE_SEARCH_SEMANTIC_CONFIGURATION") or "menuSemanticConfig",
-        identifier_field=os.environ.get("AZURE_SEARCH_IDENTIFIER_FIELD") or "id",
-        content_field=os.environ.get("AZURE_SEARCH_CONTENT_FIELD") or "description",
-        embedding_field=os.environ.get("AZURE_SEARCH_EMBEDDING_FIELD") or "embedding",
-        title_field=os.environ.get("AZURE_SEARCH_TITLE_FIELD") or "name",
-        use_vector_query=_get_bool_env("AZURE_SEARCH_USE_VECTOR_QUERY", True)
-    )
+    # Initialize local ChromaDB for menu search
+    chroma_path = os.environ.get("CHROMA_DATA_PATH") or str(Path(__file__).parent / "chroma_data")
+    chroma_collection_name = os.environ.get("CHROMA_COLLECTION_NAME") or "menu_items"
+    logger.info("Loading ChromaDB from %s, collection=%s", chroma_path, chroma_collection_name)
+    chroma_client = chromadb.PersistentClient(path=chroma_path)
+    chroma_collection = chroma_client.get_collection(chroma_collection_name)
+
+    attach_tools_rtmt(rtmt, chroma_collection=chroma_collection)
 
     rtmt.attach_to_app(app, "/realtime")
 
