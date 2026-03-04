@@ -13,18 +13,16 @@ apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: foundry-local-operator
-  namespace: foundry-local-operator
+  namespace: flux-system
 spec:
   interval: 1h
+  targetNamespace: foundry-local-operator
   dependsOn:
     - name: cert-manager
-      namespace: cert-manager
     - name: trust-manager
-      namespace: cert-manager
   chartRef:
     kind: OCIRepository
     name: foundry-local-operator
-    namespace: flux-system
   install:
     createNamespace: true
     remediation:
