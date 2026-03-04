@@ -9,6 +9,7 @@ from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 
 from rtmt import RTMiddleTier
+from rtmt_local import RTLocalPipeline
 from tools import attach_tools_rtmt
 
 logging.basicConfig(level=logging.INFO)
@@ -30,34 +31,43 @@ async def create_app() -> web.Application:
         logger.info("Running in development mode; loading values from .env")
         load_dotenv()
 
-    llm_endpoint = os.environ.get("AZURE_OPENAI_EASTUS2_ENDPOINT")
-    llm_deployment = os.environ.get("AZURE_OPENAI_REALTIME_DEPLOYMENT")
-    if not llm_endpoint or not llm_deployment:
-        raise RuntimeError("Azure OpenAI realtime endpoint and deployment must be configured.")
-
-    llm_key = os.environ.get("AZURE_OPENAI_EASTUS2_API_KEY")
-
-    credential = None
-    if not llm_key:
-        if tenant_id := os.environ.get("AZURE_TENANT_ID"):
-            logger.info("Using AzureDeveloperCliCredential with tenant_id %s", tenant_id)
-            credential = AzureDeveloperCliCredential(tenant_id=tenant_id, process_timeout=60)
-        else:
-            logger.info("Using DefaultAzureCredential")
-            credential = DefaultAzureCredential()
-
-    llm_credential = AzureKeyCredential(llm_key) if llm_key else credential
+    use_local = _get_bool_env("USE_LOCAL_PIPELINE", True)
 
     app = web.Application()
 
-    rtmt = RTMiddleTier(
-        credentials=llm_credential,
-        endpoint=llm_endpoint,
-        deployment=llm_deployment,
-        voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "coral"
-    )
-    if api_version := os.environ.get("AZURE_OPENAI_REALTIME_API_VERSION"):
-        rtmt.api_version = api_version
+    if use_local:
+        logger.info("Using LOCAL pipeline (Whisper STT → Phi-4 Mini → Piper TTS)")
+        rtmt = RTLocalPipeline(
+            voice_choice=os.environ.get("TTS_VOICE", "en_US-amy-medium"),
+        )
+    else:
+        llm_endpoint = os.environ.get("AZURE_OPENAI_EASTUS2_ENDPOINT")
+        llm_deployment = os.environ.get("AZURE_OPENAI_REALTIME_DEPLOYMENT")
+        if not llm_endpoint or not llm_deployment:
+            raise RuntimeError("Azure OpenAI realtime endpoint and deployment must be configured.")
+
+        llm_key = os.environ.get("AZURE_OPENAI_EASTUS2_API_KEY")
+
+        credential = None
+        if not llm_key:
+            if tenant_id := os.environ.get("AZURE_TENANT_ID"):
+                logger.info("Using AzureDeveloperCliCredential with tenant_id %s", tenant_id)
+                credential = AzureDeveloperCliCredential(tenant_id=tenant_id, process_timeout=60)
+            else:
+                logger.info("Using DefaultAzureCredential")
+                credential = DefaultAzureCredential()
+
+        llm_credential = AzureKeyCredential(llm_key) if llm_key else credential
+
+        rtmt = RTMiddleTier(
+            credentials=llm_credential,
+            endpoint=llm_endpoint,
+            deployment=llm_deployment,
+            voice_choice=os.environ.get("AZURE_OPENAI_REALTIME_VOICE_CHOICE") or "coral",
+        )
+        if api_version := os.environ.get("AZURE_OPENAI_REALTIME_API_VERSION"):
+            rtmt.api_version = api_version
+
     rtmt.temperature = 0.6
     rtmt.system_message = (
         "You are Dunkin's always-on virtual crew member, proudly representing Inspire Brands. "
