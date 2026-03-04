@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/component: speech-to-text
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: whisper-stt
@@ -33,6 +35,13 @@ spec:
               value: "cuda"
             - name: WHISPER__COMPUTE_TYPE
               value: "float16"
+            # Preload model at startup, never unload (-1 = keep in memory forever)
+            - name: PRELOAD_MODELS
+              value: '["Systran/faster-whisper-large-v3-turbo"]'
+            - name: WHISPER__TTL
+              value: "-1"
+            - name: DEFAULT_LANGUAGE
+              value: "en"
           resources:
             requests:
               cpu: "1"
