@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - dunkin-voice/deployment.yaml
+  - dunkin-voice/service.yaml
+  - dunkin-voice/configmap.yaml
+  - dunkin-voice/nginx-tls-config.yaml
+  - dunkin-voice/secret-provider-class.yaml

@@ -1,0 +1,34 @@
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  name: foundry-local-operator
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://mcr.microsoft.com/foundrylocalonazurelocal/helmcharts/helm/inferenceoperator
+  ref:
+    tag: 0.0.1-prp.5
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: foundry-local-operator
+  namespace: foundry-local-operator
+spec:
+  interval: 1h
+  dependsOn:
+    - name: cert-manager
+      namespace: cert-manager
+    - name: trust-manager
+      namespace: cert-manager
+  chartRef:
+    kind: OCIRepository
+    name: foundry-local-operator
+    namespace: flux-system
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
