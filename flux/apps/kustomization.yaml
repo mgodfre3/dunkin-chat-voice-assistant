@@ -9,3 +9,6 @@ resources:
   # Whisper STT (faster-whisper-server with CUDA GPU)
   - whisper-stt/deployment.yaml
   - whisper-stt/service.yaml
+  # Piper TTS (OpenAI-compatible /v1/audio/speech on CPU)
+  - piper-tts/deployment.yaml
+  - piper-tts/service.yaml
