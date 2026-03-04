@@ -5,4 +5,4 @@ resources:
   - dunkin-voice/service.yaml
   - dunkin-voice/configmap.yaml
   - dunkin-voice/nginx-tls-config.yaml
-  - dunkin-voice/secret-provider-class.yaml
+  # - dunkin-voice/secret-provider-class.yaml  # Re-enable when Secrets Store CSI Driver is installed
