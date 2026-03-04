@@ -30,17 +30,19 @@ spec:
               name: http
           env:
             - name: WHISPER__MODEL
-              value: "Systran/faster-whisper-large-v3-turbo"
+              value: "Systran/faster-whisper-small"
             - name: WHISPER__INFERENCE_DEVICE
               value: "cpu"
             - name: WHISPER__COMPUTE_TYPE
               value: "int8"
             - name: PRELOAD_MODELS
-              value: '["Systran/faster-whisper-large-v3-turbo"]'
+              value: '["Systran/faster-whisper-small"]'
             - name: WHISPER__TTL
               value: "-1"
             - name: DEFAULT_LANGUAGE
               value: "en"
+            - name: HF_HUB_OFFLINE
+              value: "0"
           resources:
             requests:
               cpu: "1"
