@@ -9,6 +9,8 @@ import time
 from typing import Any
 
 import aiohttp
+import ssl
+
 from aiohttp import web
 
 from order_state import SessionIdentifiers, order_state_singleton
@@ -423,7 +425,13 @@ class RTLocalPipeline:
         if self.system_message:
             state.conversation.append({"role": "system", "content": self.system_message})
 
-        async with aiohttp.ClientSession() as http:
+        # Allow self-signed certs from Foundry Local operator
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+
+        async with aiohttp.ClientSession(connector=connector) as http:
             # Send session.created
             await ws.send_json({
                 "type": "session.created",

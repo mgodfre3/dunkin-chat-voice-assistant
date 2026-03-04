@@ -19,8 +19,16 @@ spec:
         app.kubernetes.io/name: whisper-stt
         app.kubernetes.io/component: speech-to-text
     spec:
-      nodeSelector:
-        accelerator: nvidia
+      # Run on CPU worker node (avoid broken VXLAN on new GPU2 node)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+                  - key: accelerator
+                    operator: DoesNotExist
       containers:
         - name: whisper
           image: fedirz/faster-whisper-server:latest-cuda
@@ -28,14 +36,12 @@ spec:
             - containerPort: 8000
               name: http
           env:
-            # Use large-v3-turbo for best speed/quality tradeoff on edge
             - name: WHISPER__MODEL
               value: "Systran/faster-whisper-large-v3-turbo"
             - name: WHISPER__INFERENCE_DEVICE
-              value: "cuda"
+              value: "cpu"
             - name: WHISPER__COMPUTE_TYPE
-              value: "float16"
-            # Preload model at startup, never unload (-1 = keep in memory forever)
+              value: "int8"
             - name: PRELOAD_MODELS
               value: '["Systran/faster-whisper-large-v3-turbo"]'
             - name: WHISPER__TTL
@@ -45,12 +51,10 @@ spec:
           resources:
             requests:
               cpu: "1"
-              memory: "2Gi"
-              nvidia.com/gpu: 1
+              memory: "1Gi"
             limits:
-              cpu: "4"
+              cpu: "3"
               memory: "4Gi"
-              nvidia.com/gpu: 1
           volumeMounts:
             - name: model-cache
               mountPath: /root/.cache/huggingface
