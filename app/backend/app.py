@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 import chromadb
+from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
@@ -87,7 +88,8 @@ async def create_app() -> web.Application:
     chroma_collection_name = os.environ.get("CHROMA_COLLECTION_NAME") or "menu_items"
     logger.info("Loading ChromaDB from %s, collection=%s", chroma_path, chroma_collection_name)
     chroma_client = chromadb.PersistentClient(path=chroma_path)
-    chroma_collection = chroma_client.get_collection(chroma_collection_name)
+    embedding_fn = ONNXMiniLM_L6_V2()
+    chroma_collection = chroma_client.get_collection(chroma_collection_name, embedding_function=embedding_fn)
 
     attach_tools_rtmt(rtmt, chroma_collection=chroma_collection)
 

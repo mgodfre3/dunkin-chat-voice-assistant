@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Ingest Dunkin menu items from menuItems.json into a local ChromaDB collection.
 
-Uses sentence-transformers for embedding generation.  Run once (or whenever
-the menu changes) to rebuild the local vector store that the backend queries.
+Uses ONNX Runtime with all-MiniLM-L6-v2 for embedding generation.  Run once
+(or whenever the menu changes) to rebuild the local vector store that the
+backend queries.
 
 Usage:
     python scripts/ingest_menu_local.py
@@ -15,12 +16,11 @@ import sys
 from pathlib import Path
 
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 CHROMA_DATA_PATH = os.environ.get("CHROMA_DATA_PATH", str(Path(__file__).resolve().parent.parent / "app" / "backend" / "chroma_data"))
 COLLECTION_NAME = os.environ.get("CHROMA_COLLECTION_NAME", "menu_items")
 
@@ -87,9 +87,9 @@ def main():
 
     logger.info("Prepared %d menu items for ingestion", len(ids))
 
-    # Initialize ChromaDB with sentence-transformers embedding function
-    logger.info("Using embedding model: %s", EMBEDDING_MODEL)
-    embedding_fn = SentenceTransformerEmbeddingFunction(model_name=EMBEDDING_MODEL)
+    # Initialize ChromaDB with ONNX Runtime embedding function (all-MiniLM-L6-v2)
+    embedding_fn = ONNXMiniLM_L6_V2()
+    logger.info("Using ONNX MiniLM-L6-v2 embedding function")
 
     logger.info("Initializing ChromaDB at %s", CHROMA_DATA_PATH)
     client = chromadb.PersistentClient(path=CHROMA_DATA_PATH)
