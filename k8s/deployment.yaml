@@ -15,6 +15,10 @@ spec:
       labels:
         app: dunkin-voice-assistant
     spec:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       containers:
         - name: dunkin-voice
           image: ${AZURE_ACR_NAME}.azurecr.io/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}
@@ -23,9 +27,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: dunkin-config
-            # Secrets synced from Key Vault via CSI driver
             - secretRef:
-                name: dunkin-keyvault-synced
+                name: dunkin-secrets
           resources:
             requests:
               cpu: "500m"
@@ -33,11 +36,6 @@ spec:
             limits:
               cpu: "2"
               memory: "2Gi"
-          volumeMounts:
-            # CSI driver mount — triggers secret sync from Key Vault
-            - name: keyvault-secrets
-              mountPath: /mnt/secrets-store
-              readOnly: true
           readinessProbe:
             httpGet:
               path: /
@@ -50,13 +48,6 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 20
-      volumes:
-        - name: keyvault-secrets
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: dunkin-keyvault-secrets
 ---
 apiVersion: v1
 kind: Service

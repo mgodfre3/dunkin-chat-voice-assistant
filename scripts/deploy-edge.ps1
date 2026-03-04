@@ -141,13 +141,14 @@ if (-not $SkipBuild) {
     Write-Host "`n>>> Step 3: Ensuring ACR '$AcrName' exists..."
     az acr create --name $AcrName --resource-group $AcrRg --sku $AcrSku --output none 2>$null
 
-    Write-Host "   Logging in to ACR..."
-    az acr login --name $AcrName
-
-    Write-Host "   Building and pushing Docker image..."
-    docker build -t $FullImage -f "$RootDir\app\Dockerfile" "$RootDir\app"
-    docker push $FullImage
-    Write-Host "   ✓ Image pushed: $FullImage"
+    Write-Host "   Building image in ACR (cloud build — linux/amd64)..."
+    az acr build `
+        --registry $AcrName `
+        --image "${ImageName}:${ImageTag}" `
+        --platform linux/amd64 `
+        --file "$RootDir/app/Dockerfile" `
+        "$RootDir/app"
+    Write-Host "   ✓ Image built and pushed: $FullImage"
 } else {
     Write-Host "`n>>> Step 3: Skipping build (-SkipBuild)"
 }
