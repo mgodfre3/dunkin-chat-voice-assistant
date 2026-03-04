@@ -48,6 +48,31 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 20
+        - name: tls-proxy
+          image: nginx:alpine
+          ports:
+            - containerPort: 443
+          volumeMounts:
+            - name: tls-certs
+              mountPath: /etc/nginx/ssl
+              readOnly: true
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+            limits:
+              cpu: "200m"
+              memory: "64Mi"
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: dunkin-tls
+        - name: nginx-conf
+          configMap:
+            name: nginx-tls-config
 ---
 apiVersion: v1
 kind: Service
@@ -55,10 +80,15 @@ metadata:
   name: dunkin-voice-service
   namespace: dunkin-voice
 spec:
-  type: LoadBalancer
+  type: NodePort
   selector:
     app: dunkin-voice-assistant
   ports:
-    - protocol: TCP
+    - name: https
+      protocol: TCP
+      port: 443
+      targetPort: 443
+    - name: http
+      protocol: TCP
       port: 80
       targetPort: 8000

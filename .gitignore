@@ -156,3 +156,5 @@ data/**/*.md5
 
 .DS_Store
 data/transformed_menu_items/
+k8s/tls.crt
+k8s/tls.key
