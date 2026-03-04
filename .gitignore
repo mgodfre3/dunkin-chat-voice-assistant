@@ -158,3 +158,4 @@ data/**/*.md5
 data/transformed_menu_items/
 k8s/tls.crt
 k8s/tls.key
+app/backend/chroma_data/
