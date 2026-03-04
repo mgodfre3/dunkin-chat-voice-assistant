@@ -1,0 +1,26 @@
+apiVersion: foundrylocal.azure.com/v1
+kind: ModelDeployment
+metadata:
+  name: phi-4-mini-gpu
+  namespace: foundry-local-operator
+  labels:
+    app.kubernetes.io/name: phi-4-mini-gpu
+    app.kubernetes.io/component: inference
+    foundry.azure.com/hardware: gpu
+spec:
+  displayName: "Phi-4 Mini GPU"
+  model:
+    catalog:
+      name: Phi-4-mini-4k-instruct-generic-gpu
+      version: "1"
+  workloadType: generative
+  compute: gpu
+  replicas: 1
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      cpu: "4"
+      memory: "5Gi"
+      gpu: 1
