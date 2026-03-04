@@ -19,16 +19,9 @@ spec:
         app.kubernetes.io/name: whisper-stt
         app.kubernetes.io/component: speech-to-text
     spec:
-      # Run on CPU worker node (avoid broken VXLAN on new GPU2 node)
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: node-role.kubernetes.io/control-plane
-                    operator: DoesNotExist
-                  - key: accelerator
-                    operator: DoesNotExist
+      # Colocate with Phi-4 on GPU node (VXLAN cross-node networking broken)
+      nodeSelector:
+        kubernetes.io/hostname: moc-lz6y09d1r1r
       containers:
         - name: whisper
           image: fedirz/faster-whisper-server:latest-cuda

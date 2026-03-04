@@ -19,15 +19,9 @@ spec:
         app.kubernetes.io/name: piper-tts
         app.kubernetes.io/component: text-to-speech
     spec:
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: node-role.kubernetes.io/control-plane
-                    operator: DoesNotExist
-                  - key: accelerator
-                    operator: DoesNotExist
+      # Colocate with Phi-4 on GPU node (VXLAN cross-node networking broken)
+      nodeSelector:
+        kubernetes.io/hostname: moc-lz6y09d1r1r
       containers:
         - name: piper
           image: kamilkrawiec/piper-openai-tts:latest
