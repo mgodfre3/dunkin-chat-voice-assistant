@@ -15,3 +15,13 @@ metadata:
 spec:
   interval: 24h
   url: https://nvidia.github.io/k8s-device-plugin
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: foundry-local-mcr
+  namespace: flux-system
+spec:
+  type: oci
+  interval: 1h
+  url: oci://mcr.microsoft.com/foundrylocalonazurelocal/helmcharts/helm
