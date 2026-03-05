@@ -3,7 +3,9 @@ import base64
 import io
 import json
 import logging
+import math
 import os
+import re
 import struct
 import time
 from typing import Any
@@ -29,34 +31,44 @@ FOUNDRY_API_KEY = os.environ.get("FOUNDRY_API_KEY", "")
 PIPER_TTS_URL = os.environ.get("PIPER_TTS_URL", "http://piper-tts.dunkin-voice.svc:5000")
 TTS_VOICE = os.environ.get("TTS_VOICE", "en_US-amy-medium")
 
-# Audio constants
-SAMPLE_RATE = 24000
+# Audio constants — frontend expects 24 kHz 16-bit mono PCM
+TARGET_SAMPLE_RATE = 24000
 BITS_PER_SAMPLE = 16
 CHANNELS = 1
-AUDIO_CHUNK_SIZE = 4800  # bytes per streaming chunk
+AUDIO_CHUNK_SIZE = 4800  # bytes per streaming chunk (~100 ms at 24 kHz)
 
-# VAD constants
-SPEECH_THRESHOLD = 500000
-SILENCE_DURATION = 0.5  # seconds of silence before processing
+# VAD constants — tuned to reduce false triggers
+SPEECH_THRESHOLD = 800000       # energy floor (raised to reject ambient noise)
+SILENCE_DURATION = 0.8          # seconds of silence before processing
+MIN_SPEECH_DURATION = 0.4       # minimum seconds of speech to send to STT
+MIN_SPEECH_BYTES = int(MIN_SPEECH_DURATION * TARGET_SAMPLE_RATE * 2)  # 19200 bytes
 
-LLM_MODEL = "Phi-4-mini-instruct-cuda-gpu:5"
+# Whisper hallucination filter — common phantom transcripts
+_HALLUCINATION_RE = re.compile(
+    r"^(you|thank you|thanks|bye|okay|uh|um|hmm|huh|ah|oh|"
+    r"thanks for watching|subscribe|like and subscribe|"
+    r"thank you for watching|music|applause|laughter|silence|"
+    r"\[.*\]|\(.*\))[\.\!\?]?$",
+    re.IGNORECASE,
+)
+
+LLM_MODEL = os.environ.get("FOUNDRY_LLM_MODEL", "Phi-4-mini-instruct-cuda-gpu:5")
 
 
 # ---------------------------------------------------------------------------
 # Audio helpers
 # ---------------------------------------------------------------------------
 
-def create_wav_header(pcm_data_len: int, sample_rate: int = SAMPLE_RATE,
+def create_wav_header(pcm_data_len: int, sample_rate: int = TARGET_SAMPLE_RATE,
                       bits_per_sample: int = BITS_PER_SAMPLE, channels: int = CHANNELS) -> bytes:
     byte_rate = sample_rate * channels * bits_per_sample // 8
     block_align = channels * bits_per_sample // 8
-    header = struct.pack(
+    return struct.pack(
         '<4sI4s4sIHHIIHH4sI',
         b'RIFF', 36 + pcm_data_len, b'WAVE',
         b'fmt ', 16, 1, channels, sample_rate, byte_rate, block_align, bits_per_sample,
         b'data', pcm_data_len,
     )
-    return header
 
 
 def calculate_energy(pcm_bytes: bytes) -> float:
@@ -67,20 +79,47 @@ def calculate_energy(pcm_bytes: bytes) -> float:
     return sum(s * s for s in samples) / len(samples)
 
 
-def pcm_to_wav(pcm_data: bytes) -> bytes:
-    return create_wav_header(len(pcm_data)) + pcm_data
+def pcm_to_wav(pcm_data: bytes, sample_rate: int = TARGET_SAMPLE_RATE) -> bytes:
+    return create_wav_header(len(pcm_data), sample_rate=sample_rate) + pcm_data
 
 
-def wav_to_pcm(wav_data: bytes) -> bytes:
-    """Strip WAV header and return raw PCM data."""
-    if wav_data[:4] == b'RIFF':
-        # Find 'data' sub-chunk
-        idx = wav_data.find(b'data')
-        if idx != -1:
-            # 4 bytes 'data' + 4 bytes chunk size
-            data_size = struct.unpack_from('<I', wav_data, idx + 4)[0]
-            return wav_data[idx + 8: idx + 8 + data_size]
-    return wav_data
+def _parse_wav(wav_data: bytes) -> tuple[bytes, int]:
+    """Return (pcm_bytes, sample_rate) from a WAV file."""
+    if wav_data[:4] != b'RIFF':
+        return wav_data, TARGET_SAMPLE_RATE
+    # Parse fmt chunk for sample rate
+    fmt_idx = wav_data.find(b'fmt ')
+    src_rate = TARGET_SAMPLE_RATE
+    if fmt_idx != -1:
+        src_rate = struct.unpack_from('<I', wav_data, fmt_idx + 12)[0]
+    # Parse data chunk
+    data_idx = wav_data.find(b'data')
+    if data_idx != -1:
+        data_size = struct.unpack_from('<I', wav_data, data_idx + 4)[0]
+        pcm = wav_data[data_idx + 8: data_idx + 8 + data_size]
+        return pcm, src_rate
+    return wav_data, src_rate
+
+
+def _resample_linear(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
+    """Resample 16-bit mono PCM via linear interpolation."""
+    if src_rate == dst_rate:
+        return pcm
+    n_src = len(pcm) // 2
+    if n_src == 0:
+        return pcm
+    samples_in = struct.unpack(f'<{n_src}h', pcm)
+    ratio = src_rate / dst_rate
+    n_dst = int(n_src / ratio)
+    out = []
+    for i in range(n_dst):
+        src_pos = i * ratio
+        idx = int(src_pos)
+        frac = src_pos - idx
+        s0 = samples_in[min(idx, n_src - 1)]
+        s1 = samples_in[min(idx + 1, n_src - 1)]
+        out.append(max(-32768, min(32767, int(s0 + frac * (s1 - s0)))))
+    return struct.pack(f'<{len(out)}h', *out)
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +134,8 @@ class _ConnectionState:
         self.speech_started = False
         self.last_speech_time: float = 0.0
         self.greeting_sent = False
+        self.processing = False           # prevent re-entrant processing
+        self.energy_history: list[float] = []  # rolling energy window
 
 
 # ---------------------------------------------------------------------------
@@ -140,8 +181,9 @@ class RTLocalPipeline:
         """Send WAV audio to Whisper STT and return transcribed text."""
         form = aiohttp.FormData()
         form.add_field('file', wav_bytes, filename='audio.wav', content_type='audio/wav')
-        form.add_field('model', 'whisper-1')
+        form.add_field('model', 'Systran/faster-whisper-small')
         form.add_field('language', 'en')
+        form.add_field('vad_filter', 'true')
         async with http.post(f"{WHISPER_STT_URL}/v1/audio/transcriptions", data=form) as resp:
             resp.raise_for_status()
             result = await resp.json()
@@ -247,32 +289,14 @@ class RTLocalPipeline:
     # Audio streaming helpers
     # ------------------------------------------------------------------
 
-    async def _stream_audio_response(
-        self,
-        http: aiohttp.ClientSession,
-        client_ws: web.WebSocketResponse,
-        state: _ConnectionState,
-        text: str,
-    ) -> None:
-        """TTS the text, then stream audio + transcript to the client,
-        finishing with response.done."""
+    async def _tts_to_24k_pcm(self, http: aiohttp.ClientSession, text: str) -> bytes:
+        """TTS text → WAV → resample to 24 kHz PCM."""
+        wav_bytes = await self._tts(http, text)
+        pcm, src_rate = _parse_wav(wav_bytes)
+        return _resample_linear(pcm, src_rate, TARGET_SAMPLE_RATE)
 
-        # Send transcript delta
-        if text:
-            await client_ws.send_json({
-                "type": "response.audio_transcript.delta",
-                "delta": text,
-            })
-
-        # Get TTS audio
-        try:
-            wav_bytes = await self._tts(http, text)
-            pcm_data = wav_to_pcm(wav_bytes)
-        except Exception as exc:
-            logger.error("TTS failed: %s", exc)
-            pcm_data = b""
-
-        # Stream audio chunks
+    async def _stream_pcm(self, client_ws: web.WebSocketResponse, pcm_data: bytes) -> None:
+        """Send PCM as base64 chunks to the client."""
         offset = 0
         while offset < len(pcm_data):
             chunk = pcm_data[offset: offset + AUDIO_CHUNK_SIZE]
@@ -282,6 +306,41 @@ class RTLocalPipeline:
                 "delta": b64,
             })
             offset += AUDIO_CHUNK_SIZE
+            # Yield control so WS doesn't stall the event loop
+            await asyncio.sleep(0)
+
+    @staticmethod
+    def _split_sentences(text: str) -> list[str]:
+        """Split text on sentence boundaries for incremental TTS."""
+        parts = re.split(r'(?<=[.!?])\s+', text.strip())
+        return [p for p in parts if p]
+
+    async def _stream_audio_response(
+        self,
+        http: aiohttp.ClientSession,
+        client_ws: web.WebSocketResponse,
+        state: _ConnectionState,
+        text: str,
+    ) -> None:
+        """TTS the text sentence-by-sentence, streaming audio as each
+        sentence is synthesized for lower perceived latency."""
+
+        sentences = self._split_sentences(text) if text else []
+        if not sentences:
+            sentences = [text] if text else []
+
+        for sentence in sentences:
+            # Send transcript for this sentence immediately
+            await client_ws.send_json({
+                "type": "response.audio_transcript.delta",
+                "delta": sentence + " ",
+            })
+            # TTS → resample → stream
+            try:
+                pcm_data = await self._tts_to_24k_pcm(http, sentence)
+                await self._stream_pcm(client_ws, pcm_data)
+            except Exception as exc:
+                logger.error("TTS failed for sentence: %s", exc)
 
         # Send response.done
         await client_ws.send_json({
@@ -306,7 +365,8 @@ class RTLocalPipeline:
         pcm_data = bytes(state.audio_buffer)
         state.audio_buffer.clear()
 
-        if not pcm_data:
+        if not pcm_data or len(pcm_data) < MIN_SPEECH_BYTES:
+            logger.info("Audio too short (%d bytes < %d), skipping", len(pcm_data), MIN_SPEECH_BYTES)
             return
 
         # 1. STT
@@ -317,8 +377,14 @@ class RTLocalPipeline:
             logger.error("STT failed: %s", exc)
             transcript = ""
 
-        if not transcript.strip():
+        transcript = transcript.strip()
+        if not transcript:
             logger.info("Empty transcript, skipping LLM call")
+            return
+
+        # Filter Whisper hallucinations
+        if _HALLUCINATION_RE.match(transcript):
+            logger.info("Filtered Whisper hallucination: '%s'", transcript)
             return
 
         logger.info("STT transcript: %s", transcript)
@@ -394,8 +460,16 @@ class RTLocalPipeline:
         state: _ConnectionState,
         audio_b64: str,
     ) -> None:
+        if state.processing:
+            return  # drop audio while processing previous utterance
+
         pcm_chunk = base64.b64decode(audio_b64)
         energy = calculate_energy(pcm_chunk)
+
+        # Keep rolling window of recent energy values (last ~1s)
+        state.energy_history.append(energy)
+        if len(state.energy_history) > 10:
+            state.energy_history.pop(0)
 
         if energy > SPEECH_THRESHOLD:
             if not state.speech_started:
@@ -404,11 +478,15 @@ class RTLocalPipeline:
             state.last_speech_time = time.monotonic()
             state.audio_buffer.extend(pcm_chunk)
         elif state.speech_started:
+            # Always buffer audio during speech (captures quiet vowels/pauses)
             state.audio_buffer.extend(pcm_chunk)
             if time.monotonic() - state.last_speech_time >= SILENCE_DURATION:
-                # Silence detected — process buffered speech
                 state.speech_started = False
-                await self._process_speech(http, client_ws, state)
+                state.processing = True
+                try:
+                    await self._process_speech(http, client_ws, state)
+                finally:
+                    state.processing = False
 
     # ------------------------------------------------------------------
     # WebSocket handler
