@@ -45,10 +45,14 @@ MIN_SPEECH_BYTES = int(MIN_SPEECH_DURATION * TARGET_SAMPLE_RATE * 2)  # 19200 by
 
 # Whisper hallucination filter — common phantom transcripts
 _HALLUCINATION_RE = re.compile(
-    r"^(you|thank you|thanks|bye|okay|uh|um|hmm|huh|ah|oh|"
-    r"thanks for watching|subscribe|like and subscribe|"
-    r"thank you for watching|music|applause|laughter|silence|"
-    r"\[.*\]|\(.*\))[\.\!\?]?$",
+    r"^(you|thank you\.?|thanks\.?|bye\.?|okay\.?|uh|um|hmm|huh|ah|oh|"
+    r"thanks for watching\.?|subscribe\.?|like and subscribe\.?|"
+    r"thank you for watching\.?|have a great day\.?|"
+    r"see you in the next video\.?|i've helped you today\.?|"
+    r"please don'?t\.?|i'?ll see you\.?|"
+    r"music|applause|laughter|silence|"
+    r"so|\.+|"
+    r"\[.*\]|\(.*\))[\.\!\?\s]*$",
     re.IGNORECASE,
 )
 
@@ -135,6 +139,7 @@ class _ConnectionState:
         self.last_speech_time: float = 0.0
         self.greeting_sent = False
         self.processing = False           # prevent re-entrant processing
+        self.tts_playing = False          # mute mic while TTS is playing
         self.energy_history: list[float] = []  # rolling energy window
 
 
@@ -323,12 +328,17 @@ class RTLocalPipeline:
         text: str,
     ) -> None:
         """TTS the text sentence-by-sentence, streaming audio as each
-        sentence is synthesized for lower perceived latency."""
+        sentence is synthesized for lower perceived latency.
+        Mutes mic input during playback to prevent echo feedback."""
+
+        state.tts_playing = True
+        state.audio_buffer.clear()  # discard any audio captured during processing
 
         sentences = self._split_sentences(text) if text else []
         if not sentences:
             sentences = [text] if text else []
 
+        tts_start = time.monotonic()
         for sentence in sentences:
             # Send transcript for this sentence immediately
             await client_ws.send_json({
@@ -337,16 +347,31 @@ class RTLocalPipeline:
             })
             # TTS → resample → stream
             try:
+                t0 = time.monotonic()
                 pcm_data = await self._tts_to_24k_pcm(http, sentence)
+                logger.info("TTS sentence (%d chars) → %d bytes in %.1fs",
+                            len(sentence), len(pcm_data), time.monotonic() - t0)
                 await self._stream_pcm(client_ws, pcm_data)
             except Exception as exc:
                 logger.error("TTS failed for sentence: %s", exc)
+
+        logger.info("TTS total: %.1fs for %d sentences", time.monotonic() - tts_start, len(sentences))
 
         # Send response.done
         await client_ws.send_json({
             "type": "response.done",
             "response": {"output": []},
         })
+
+        # Estimate playback duration and wait before unmuting mic
+        # This prevents the mic from capturing the tail end of TTS playback
+        total_pcm_bytes = sum(
+            len(await self._tts_to_24k_pcm(http, s)) for s in sentences
+        ) if False else 0  # skip re-synthesis; use a fixed delay instead
+        await asyncio.sleep(0.5)  # small grace period for audio to finish playing
+
+        state.tts_playing = False
+        state.audio_buffer.clear()  # discard anything captured during TTS
 
         # Advance round-trip tracking
         identifiers = order_state_singleton.advance_round_trip(state.session_id)
@@ -362,32 +387,38 @@ class RTLocalPipeline:
         client_ws: web.WebSocketResponse,
         state: _ConnectionState,
     ) -> None:
+        pipeline_start = time.monotonic()
         pcm_data = bytes(state.audio_buffer)
         state.audio_buffer.clear()
 
+        audio_duration = len(pcm_data) / (TARGET_SAMPLE_RATE * 2)
         if not pcm_data or len(pcm_data) < MIN_SPEECH_BYTES:
-            logger.info("Audio too short (%d bytes < %d), skipping", len(pcm_data), MIN_SPEECH_BYTES)
+            logger.info("Audio too short (%.1fs / %d bytes), skipping", audio_duration, len(pcm_data))
             return
+
+        logger.info("Processing %.1fs of audio (%d bytes)", audio_duration, len(pcm_data))
 
         # 1. STT
         wav_bytes = pcm_to_wav(pcm_data)
+        t0 = time.monotonic()
         try:
             transcript = await self._stt(http, wav_bytes)
         except Exception as exc:
             logger.error("STT failed: %s", exc)
             transcript = ""
+        stt_time = time.monotonic() - t0
 
         transcript = transcript.strip()
         if not transcript:
-            logger.info("Empty transcript, skipping LLM call")
+            logger.info("Empty transcript (STT took %.1fs), skipping", stt_time)
             return
 
         # Filter Whisper hallucinations
         if _HALLUCINATION_RE.match(transcript):
-            logger.info("Filtered Whisper hallucination: '%s'", transcript)
+            logger.info("Filtered hallucination: '%s' (STT took %.1fs)", transcript, stt_time)
             return
 
-        logger.info("STT transcript: %s", transcript)
+        logger.info("STT: '%s' (%.1fs)", transcript, stt_time)
 
         # Notify client of completed transcription
         await client_ws.send_json({
@@ -399,18 +430,21 @@ class RTLocalPipeline:
         state.conversation.append({"role": "user", "content": transcript})
 
         tools_schema = self._build_tools_schema()
+        t0 = time.monotonic()
         try:
             llm_resp = await self._llm_chat(http, state.conversation, tools_schema or None)
         except Exception as exc:
             logger.error("LLM call failed: %s", exc)
             await client_ws.send_json({"type": "error", "error": {"message": str(exc)}})
             return
+        llm_time = time.monotonic() - t0
 
         choice = llm_resp["choices"][0]
         msg = choice["message"]
 
         # 3. Handle tool calls or direct text
         if msg.get("tool_calls"):
+            logger.info("LLM: tool calls (%.1fs)", llm_time)
             try:
                 final_text = await self._execute_tool_calls(http, client_ws, state, msg["tool_calls"])
             except Exception as exc:
@@ -419,10 +453,14 @@ class RTLocalPipeline:
                 state.conversation.append({"role": "assistant", "content": final_text})
         else:
             final_text = msg.get("content", "")
+            logger.info("LLM: '%s' (%.1fs)", final_text[:80], llm_time)
             state.conversation.append({"role": "assistant", "content": final_text})
 
         # 4. TTS + stream
         await self._stream_audio_response(http, client_ws, state, final_text)
+
+        logger.info("Pipeline total: %.1fs (STT=%.1fs LLM=%.1fs)",
+                     time.monotonic() - pipeline_start, stt_time, llm_time)
 
     # ------------------------------------------------------------------
     # Auto-greeting
@@ -460,8 +498,9 @@ class RTLocalPipeline:
         state: _ConnectionState,
         audio_b64: str,
     ) -> None:
-        if state.processing:
-            return  # drop audio while processing previous utterance
+        # Drop all audio while TTS is playing (prevents echo feedback loop)
+        if state.tts_playing or state.processing:
+            return
 
         pcm_chunk = base64.b64decode(audio_b64)
         energy = calculate_energy(pcm_chunk)
