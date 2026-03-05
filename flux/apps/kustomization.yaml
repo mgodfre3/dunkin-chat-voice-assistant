@@ -6,9 +6,8 @@ resources:
   - dunkin-voice/configmap.yaml
   - dunkin-voice/nginx-tls-config.yaml
   # - dunkin-voice/secret-provider-class.yaml  # Re-enable when Secrets Store CSI Driver is installed
-  # Whisper STT (faster-whisper-server with CUDA GPU)
-  - whisper-stt/deployment.yaml
-  - whisper-stt/service.yaml
-  # Piper TTS (OpenAI-compatible /v1/audio/speech on CPU)
-  - piper-tts/deployment.yaml
-  - piper-tts/service.yaml
+  # Local-only services (disabled in hybrid mode):
+  # - whisper-stt/deployment.yaml
+  # - whisper-stt/service.yaml
+  # - piper-tts/deployment.yaml
+  # - piper-tts/service.yaml

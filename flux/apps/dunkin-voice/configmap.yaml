@@ -9,12 +9,8 @@ data:
   PORT: "8000"
   CHROMA_DATA_PATH: "/app/chroma_data"
   CHROMA_COLLECTION_NAME: "menu_items"
-  # Local pipeline (set USE_LOCAL_PIPELINE=false to use Azure OpenAI Realtime)
-  USE_LOCAL_PIPELINE: "true"
-  WHISPER_STT_URL: "http://whisper-stt.dunkin-voice.svc:8000"
-  FOUNDRY_LLM_URL: "https://phi-4-mini-gpu.foundry-local-operator.svc:5000"
-  PIPER_TTS_URL: "http://piper-tts.dunkin-voice.svc:5000"
-  TTS_VOICE: "en_US-amy-medium"
-  # Azure OpenAI (only used when USE_LOCAL_PIPELINE=false)
+  # Hybrid mode: Azure OpenAI Realtime for voice, local ChromaDB for search
+  USE_LOCAL_PIPELINE: "false"
+  # Azure OpenAI Realtime
   AZURE_OPENAI_REALTIME_VOICE_CHOICE: "coral"
   AZURE_OPENAI_REALTIME_DEPLOYMENT: "gpt-4o-realtime-preview"
