@@ -23,7 +23,7 @@ spec:
         - name: acr-secret
       containers:
         - name: dunkin-voice
-          image: cadunkinacr.azurecr.io/dunkin-voice-assistant:slim-v4
+          image: cadunkinacr.azurecr.io/dunkin-voice-assistant:slim-v5
           ports:
             - containerPort: 8000
           envFrom:
@@ -54,6 +54,8 @@ spec:
           image: nginx:alpine
           ports:
             - containerPort: 443
+              hostPort: 443
+              protocol: TCP
           volumeMounts:
             - name: tls-certs
               mountPath: /etc/nginx/ssl
