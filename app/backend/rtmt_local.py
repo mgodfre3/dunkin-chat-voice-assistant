@@ -230,7 +230,27 @@ class RTLocalPipeline:
     # ------------------------------------------------------------------
 
     def _build_tools_schema(self) -> list[dict]:
-        return [tool.schema for tool in self.tools.values()]
+        """Convert tool schemas to OpenAI chat completions format.
+
+        The RTMiddleTier schemas use a flat format (type/name/description/parameters
+        at top level) from the Realtime API.  The standard /v1/chat/completions
+        endpoint expects {type: "function", function: {name, description, parameters}}.
+        """
+        out = []
+        for tool in self.tools.values():
+            s = tool.schema
+            if "function" not in s and "name" in s:
+                out.append({
+                    "type": "function",
+                    "function": {
+                        "name": s["name"],
+                        "description": s.get("description", ""),
+                        "parameters": s.get("parameters", {}),
+                    },
+                })
+            else:
+                out.append(s)
+        return out
 
     async def _execute_tool_calls(
         self,
@@ -298,11 +318,14 @@ class RTLocalPipeline:
         """TTS text → WAV → resample to 24 kHz PCM."""
         wav_bytes = await self._tts(http, text)
         pcm, src_rate = _parse_wav(wav_bytes)
+        if src_rate != TARGET_SAMPLE_RATE:
+            logger.debug("Resampling TTS audio from %d Hz to %d Hz", src_rate, TARGET_SAMPLE_RATE)
         return _resample_linear(pcm, src_rate, TARGET_SAMPLE_RATE)
 
     async def _stream_pcm(self, client_ws: web.WebSocketResponse, pcm_data: bytes) -> None:
-        """Send PCM as base64 chunks to the client."""
+        """Send PCM as base64 chunks to the client with pacing."""
         offset = 0
+        chunk_count = 0
         while offset < len(pcm_data):
             chunk = pcm_data[offset: offset + AUDIO_CHUNK_SIZE]
             b64 = base64.b64encode(chunk).decode("ascii")
@@ -311,8 +334,11 @@ class RTLocalPipeline:
                 "delta": b64,
             })
             offset += AUDIO_CHUNK_SIZE
-            # Yield control so WS doesn't stall the event loop
-            await asyncio.sleep(0)
+            chunk_count += 1
+            # Pace audio sending — yield every 5 chunks (~500ms of audio)
+            # to prevent WS buffer overflow which causes dropped audio
+            if chunk_count % 5 == 0:
+                await asyncio.sleep(0.01)
 
     @staticmethod
     def _split_sentences(text: str) -> list[str]:
