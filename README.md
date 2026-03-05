@@ -1,254 +1,160 @@
-# Dunkin Voice Chat Assistant
+# Dunkin Voice Chat Assistant — Hybrid-Edge Deployment
 
-Dunkin Voice Chat Assistant is an Inspire Brands–themed, voice-driven ordering experience that showcases Microsoft best practices for Azure OpenAI GPT-4o Realtime, Azure AI Search, and Azure Container Apps. The experience emulates a Dunkin crew member who can search the official menu, hold multilingual conversations, and keep orders in sync across devices.
+> **Live demo:** <https://dunkin.adaptivecloudlab.com>
 
-As guests speak, real-time transcription, translation, and order management provide a transparent view of every choice...from signature lattes to bakery classics. The UI applies Dunkin's vibrant design language so stakeholders can picture how voice AI augments drive-thru, curbside, and kiosk flows.
+A Dunkin' Donuts voice ordering assistant running as a **Hybrid-Edge Deployment** on Azure Local. Voice and AI reasoning happen in the cloud via Azure OpenAI GPT-4o Realtime, while menu search runs locally at the edge using ChromaDB with ONNX embeddings — no cloud dependency for menu data.
 
-Beyond coffee fans, this sample demonstrates how Microsoft’s Responsible AI guidance plus Azure-first tooling enable inclusive, hands-free interactions for franchise teams, accessibility scenarios, and mixed fleet deployments across the Inspire Brands portfolio.
+| Layer | Technology | Location |
+|-------|-----------|----------|
+| **Voice / AI** | Azure OpenAI GPT-4o Realtime API (STT + reasoning + TTS in one streaming WebSocket, sub-second latency) | Cloud |
+| **Menu Search** | ChromaDB vector database with ONNX MiniLM-L6-v2 embeddings, baked into the container | Edge |
+| **Infrastructure** | AKS Arc on Azure Local (on-premises Kubernetes) | Edge |
+| **GitOps** | Flux v2 — syncs deployment manifests from GitHub | Edge |
+| **Container** | Optimized 383 MB slim image (down from 8.9 GB original) | Edge |
 
 ## Table of Contents
 
-- [Dunkin Voice Chat Assistant](#dunkin-voice-chat-assistant)
-  - [Table of Contents](#table-of-contents)
-  - [Acknowledgment](#acknowledgment)
-  - [Visual Demonstrations](#visual-demonstrations)
-    - [Desktop 4 Minute Interaction Big Order Demo](#desktop-4-minute-interaction-big-order-demo)
-    - [Mobile Multilingual Ordering Demo](#mobile-multilingual-ordering-demo)
-    - [UI Elements Walkthrough](#ui-elements-walkthrough)
-  - [Features](#features)
-    - [Architecture Diagram](#architecture-diagram)
-  - [Getting Started](#getting-started)
-    - [GitHub Codespaces](#github-codespaces)
-    - [VS Code Dev Containers](#vs-code-dev-containers)
-    - [Local environment](#local-environment)
-  - [Ingesting Menu Items into Azure AI Search](#ingesting-menu-items-into-azure-ai-search)
-    - [From JSON](#from-json)
-      - [Steps (JSON)](#steps-json)
-    - [From PDF](#from-pdf)
-      - [Steps (PDF)](#steps-pdf)
-  - [Running the App Locally](#running-the-app-locally)
-    - [Option 1: Direct Local Execution (Recommended for Development)](#option-1-direct-local-execution-recommended-for-development)
-    - [Option 2: Docker-based Local Execution](#option-2-docker-based-local-execution)
-  - [Deploying to Azure](#deploying-to-azure)
-  - [Contributing](#contributing)
-  - [Resources](#resources)
+- [Architecture](#architecture)
+- [Features](#features)
+- [Upstream Acknowledgment](#upstream-acknowledgment)
+- [Hybrid vs. Fully-Local Mode](#hybrid-vs-fully-local-mode)
+- [Getting Started](#getting-started)
+- [Running the App Locally](#running-the-app-locally)
+- [Deploying to Azure Local (Edge)](#deploying-to-azure-local-edge)
+- [Demo Guide](#demo-guide)
+- [Contributing](#contributing)
+- [Resources](#resources)
 
-## Acknowledgment
+## Architecture
 
-This project extends the [VoiceRAG Repository](https://github.com/Azure-Samples/aisearch-openai-rag-audio), adapting its Microsoft-first architecture for a Dunkin scenario. Review the original pattern in this [blog post](https://aka.ms/voicerag). For the upstream README, see [voice_rag_README.md](voice_rag_README.md).
+```mermaid
+graph LR
+    Browser["🎤 Browser"] -->|"HTTPS (wss://)"| Nginx["🔒 Nginx TLS<br/>Sidecar"]
+    Nginx -->|HTTP| Backend["🐍 Python Backend<br/>(aiohttp)"]
+    Backend -->|"WebSocket"| AzureOAI["☁️ Azure OpenAI<br/>GPT-4o Realtime"]
+    Backend -->|Query| ChromaDB["📦 ChromaDB<br/>(Local Vector DB)"]
+    Backend -->|Read| Menu["📋 Menu Data<br/>(Local JSON)"]
 
-Special thanks to [John Carroll](https://github.com/john-carroll-sw) for the original [coffee-chat-voice-assistant](https://github.com/john-carroll-sw/coffee-chat-voice-assistant) that inspired this sample. This fork updates to the latest OpenAI models and stirs in a few extra flavors—call it my own brew of the solution.
+    subgraph "Azure Local Edge (On-Premises)"
+        Nginx
+        Backend
+        ChromaDB
+        Menu
+    end
 
-## Visual Demonstrations
+    subgraph "Azure Cloud"
+        AzureOAI
+    end
+```
 
-![app screenshot](docs/Demo/DesktopViewPreloadedData.png)
+**Data flow:** The browser opens a WebSocket over HTTPS (terminated by an nginx TLS sidecar). The Python backend streams audio bi-directionally with Azure OpenAI's Realtime API for speech-to-text, reasoning, and text-to-speech. When the model needs menu information it calls a tool function; the backend queries ChromaDB locally and returns results — menu data never leaves the edge.
 
 ## Features
 
-- **Dunkin-specific conversational AI**: GPT-4o Realtime is constrained to verified menu data through Azure AI Search so it always sounds like a Dunkin crew member.
-- **Retrieval-Augmented Generation (RAG)**: Azure OpenAI tool-calling plus semantic hybrid search keep recommendations grounded with pricing, nutrition, and add-on guidance.
-- **Real-Time Transcription + Translation**: Multilingual guests receive accurate transcripts in their language of choice with instant pivots between English, Spanish, Mandarin, French, and more.
-- **Live Order Synchronization**: Function calls update the shared cart so kiosk screens, mobile devices, and drive-thru headsets stay aligned without race conditions.
-- **Audio Output + Accessibility**: Browser audio playback mirrors what a guest would hear over drive-thru speakers, supporting screenless or low-vision ordering.
-- **Durable Session Tokens**: Every realtime conversation emits a session token plus per-turn identifiers so transcripts can map back to telemetry, QA findings, or Azure logs.
+- **Real-time voice ordering**: GPT-4o Realtime handles STT → reasoning → TTS in a single streaming connection with ~200 ms latency.
+- **Local menu search (RAG)**: ChromaDB with ONNX MiniLM-L6-v2 embeddings provides semantic search over the Dunkin' menu entirely at the edge.
+- **Tool calling**: The model uses function calling to search the menu, add/remove items, and calculate order totals.
+- **Live order synchronization**: Function calls update a shared cart so the order panel stays in sync.
+- **Multilingual support**: Real-time transcription and translation across English, Spanish, Mandarin, French, and more.
+- **Drive-through UX**: Designed for kiosk, curbside, and drive-thru ordering flows.
 
-### Architecture Diagram
+## Upstream Acknowledgment
 
-The `RTClient` in the frontend receives the audio input, sends that to the Python backend which uses an `RTMiddleTier` object to interface with the Azure OpenAI real-time API, and includes a tool for searching Azure AI Search.
+This is a fork of [swigerb/dunkin-chat-voice-assistant](https://github.com/swigerb/dunkin-chat-voice-assistant), which extends the [VoiceRAG pattern](https://github.com/Azure-Samples/aisearch-openai-rag-audio) ([blog post](https://aka.ms/voicerag)). Special thanks to [John Carroll](https://github.com/john-carroll-sw) for the original [coffee-chat-voice-assistant](https://github.com/john-carroll-sw/coffee-chat-voice-assistant).
 
-![Diagram of real-time RAG pattern](docs/RTMTPattern.png)
+This fork ([mgodfre3/dunkin-chat-voice-assistant](https://github.com/mgodfre3/dunkin-chat-voice-assistant)) replaces Azure AI Search with a local ChromaDB instance, optimizes the container image, and adds Kubernetes manifests for AKS Arc on Azure Local with Flux GitOps.
 
-This repository includes infrastructure as code and a `Dockerfile` to deploy the app to Azure Container Apps, but it can also be run locally as long as Azure AI Search and Azure OpenAI services are configured.
+## Hybrid vs. Fully-Local Mode
+
+The `USE_LOCAL_PIPELINE` environment variable toggles between two modes:
+
+| Mode | `USE_LOCAL_PIPELINE` | Voice Pipeline | Menu Search | Latency |
+|------|---------------------|---------------|-------------|---------|
+| **Hybrid (default)** | `false` | Azure OpenAI Realtime (cloud) | ChromaDB (local) | ~200 ms |
+| **Fully-local** | `true` | Foundry Local + Whisper + Piper TTS (edge) | ChromaDB (local) | ~10–20 s |
+
+The hybrid mode is recommended for production. The fully-local mode is available for air-gapped scenarios but has significantly higher latency due to edge compute constraints.
 
 ## Getting Started
 
-You have a few options for getting started with this template. The quickest way to get started is [GitHub Codespaces](#github-codespaces), since it will setup all the tools for you, but you can also [set it up locally](#local-environment). You can also use a [VS Code dev container](#vs-code-dev-containers)
+### Prerequisites
 
-### GitHub Codespaces
+- Python ≥ 3.11
+- Node.js (for frontend build)
+- Docker (for container builds)
+- An Azure OpenAI resource with a GPT-4o Realtime deployment
 
-You can run this repo virtually by using GitHub Codespaces, which opens a web-based VS Code in your browser:
+### Quick Start
 
-1. In your forked GitHub repository, select **Code ➜ Codespaces ➜ Create codespace on main**.
-2. Choose a machine type with at least 8 cores (the 32 GB option provides the smoothest dev experience).
-3. After the container finishes provisioning, open a new terminal and proceed to [deploying the app](#deploying-to-azure).
+1. Clone this repository:
 
-### VS Code Dev Containers
-
-You can run the project in your local VS Code Dev Container using the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers):
-
-1. Start Docker Desktop (install it if not already installed).
-2. Clone your GitHub repository locally (see [Local environment](#local-environment)).
-3. Open the folder in VS Code and choose **Reopen in Container** when prompted (or run the **Dev Containers: Reopen in Container** command).
-4. After the container finishes building, open a new terminal and proceed to [deploying the app](#deploying-to-azure).
-
-### Local environment
-
-1. Install the required tools by running the prerequisites script:
-
-  ```bash
-  # Make the script executable
-  chmod +x ./scripts/install_prerequisites.sh
-   
-  # Run the script
-  ./scripts/install_prerequisites.sh
-  ```
-
-  The script installs the Azure CLI, signs you in, and verifies Docker availability for you.
-
-  Alternatively, manually install [Azure Developer CLI](https://aka.ms/azure-dev/install), [Node.js](https://nodejs.org/), [Python >=3.11](https://www.python.org/downloads/), [Git](https://git-scm.com/downloads), and [Docker Desktop](https://www.docker.com/products/docker-desktop).
-  2. Clone your GitHub repository (`git clone https://github.com/swigerb/dunkin-chat-voice-assistant.git`)
-  3. Proceed to the next section to [deploy the app](#deploying-to-azure).
-
-## Ingesting Menu Items into Azure AI Search
-
-### From JSON
-
-If you have a JSON file containing the menu items for your café, you can use the provided Jupyter notebook to ingest the data into Azure AI Search.
-
-#### Steps (JSON)
-
-1. Open the `menu_ingestion_search_json.ipynb` notebook.
-2. Follow the instructions to configure Azure OpenAI and Azure AI Search services.
-3. Prepare the JSON data for ingestion.
-4. Upload the prepared data to Azure AI Search.
-
-This notebook demonstrates how to configure Azure OpenAI and Azure AI Search services, prepare the JSON data for ingestion, and upload the data to Azure AI Search for hybrid semantic search capabilities.
-
-[Link to JSON Ingestion Notebook](scripts/menu_ingestion_search_json.ipynb)
-
-### From PDF
-
-If you have a PDF file of a café's menu that you would like to use, you can use the provided Jupyter notebook to extract text from the PDF, parse it into structured JSON format, and ingest the data into Azure AI Search.
-
-#### Steps (PDF)
-
-1. Open the `menu_ingestion_search_pdf.ipynb` notebook.
-2. Follow the instructions to extract text from the PDF using OCR.
-3. Parse the extracted text using GPT-4o into structured JSON format.
-4. Configure Azure OpenAI and Azure AI Search services.
-5. Prepare the parsed data for ingestion.
-6. Upload the prepared data to Azure AI Search.
-
-This notebook demonstrates how to extract text from a menu PDF using OCR, parse the extracted text into structured JSON format, configure Azure OpenAI and Azure AI Search services, prepare the parsed data for ingestion, and upload the data to Azure AI Search for hybrid semantic search capabilities.
-
-[Link to PDF Ingestion Notebook](scripts/menu_ingestion_search_pdf.ipynb)
-
-## Running the App Locally
-
-You have two options for running the app locally for development and testing:
-
-### Option 1: Direct Local Execution (Recommended for Development)
-
-Run this app locally using the provided start scripts:
-
-1. Create an `app/backend/.env` file with the necessary environment variables. You can use the provided sample file as a template:
-
-   ```shell
-   cp app/backend/.env-sample app/backend/.env
+   ```bash
+   git clone https://github.com/mgodfre3/dunkin-chat-voice-assistant.git
+   cd dunkin-chat-voice-assistant
    ```
 
-   Then, fill in the required values in the `app/backend/.env` file.
+2. Copy and fill in environment variables:
 
-2. Run this command to start the app:
+   ```bash
+   cp app/backend/.env-sample app/backend/.env
+   # Edit app/backend/.env with your Azure OpenAI credentials
+   ```
 
-   Windows:
+3. Start the app:
 
-   ```pwsh
+   ```bash
+   # Linux/Mac
+   ./scripts/start.sh
+
+   # Windows
    pwsh .\scripts\start.ps1
    ```
 
-   Linux/Mac:
+4. Open <http://localhost:8000>.
 
-   ```bash
-   ./scripts/start.sh
-   ```
+## Running the App Locally
 
-3. The app will be available at [http://localhost:8000](http://localhost:8000)
+### Direct Execution
 
-### Option 2: Docker-based Local Execution
+See [Quick Start](#quick-start) above.
 
-For testing in an isolated container environment:
-
-1. Make sure you have an `.env` file in the `app/backend/` directory as described above.
-
-2. Run the Docker build script:
-
-   ```bash
-   # Make the script executable
-   chmod +x ./scripts/docker-build.sh
-   
-   # Run the build script
-   ./scripts/docker-build.sh
-   ```
-
-   This script automatically handles:
-
-    - Verifying/creating frontend environment variables
-    - Building the Docker image using `app/frontend/.env` for Vite settings
-    - Running the container with your backend configuration
-
-3. Navigate to [http://localhost:8000](http://localhost:8000) to use the application.
-
-Alternatively, you can manually build and run the Docker container:
+### Docker
 
 ```bash
-# Ensure frontend Vite settings exist (edit values as needed)
-# cp ./app/frontend/.env-sample ./app/frontend/.env
+# Build the optimized image
+docker build -t dunkin-voice-assistant -f ./app/Dockerfile ./app
 
-# Build the Docker image
-docker build -t coffee-chat-app \
-  -f ./app/Dockerfile ./app
-
-# Run the container with your environment variables
-docker run -p 8000:8000 --env-file ./app/backend/.env coffee-chat-app:latest
+# Run with your environment
+docker run -p 8000:8000 --env-file ./app/backend/.env dunkin-voice-assistant:latest
 ```
 
-## Deploying to Azure
+Or use the convenience script:
 
-To deploy the app to a production environment in Azure:
+```bash
+chmod +x ./scripts/docker-build.sh
+./scripts/docker-build.sh
+```
 
-1. Make sure you have an `.env` file set up in the `app/backend/` directory. You can copy the sample file:
+## Deploying to Azure Local (Edge)
 
-   ```bash
-   cp app/backend/.env-sample app/backend/.env
-   ```
+This repository includes Kubernetes manifests and Flux configuration for deploying to AKS Arc on Azure Local:
 
-2. Run the deployment script with minimal parameters:
+- **`k8s/`** — Kubernetes deployment, service, and ingress manifests
+- **`flux/`** — Flux v2 GitOps configuration (Kustomization, HelmRelease, etc.)
 
-   ```bash
-   # Make the script executable
-   chmod +x ./scripts/deploy.sh
-   
-   # Run the deployment with just the app name (uses all defaults)
-   ./scripts/deploy.sh <name-of-your-app>
-   ```
+Flux watches this repository and automatically reconciles changes to the cluster. See [DEPLOY.md](DEPLOY.md) for detailed deployment instructions.
 
-   The script will automatically:
-   - Look for backend environment variables in `./app/backend/.env`
-   - Look for or create frontend environment variables in `./app/frontend/.env`
-   - Use the Dockerfile at `./app/Dockerfile`
-   - Use the Docker context at `./app`
-   
-3. For more control, you can specify custom paths:
+## Demo Guide
 
-   ```bash
-   ./scripts/deploy.sh \
-     --env-file /path/to/custom/backend.env \
-     --frontend-env-file /path/to/custom/frontend.env \
-     --dockerfile /path/to/custom/Dockerfile \
-     --context /path/to/custom/context \
-     <name-of-your-app>
-   ```
-
-4. After deployment completes, your app will be available at the URL displayed in the console.
+See [docs/demo-guide.md](docs/demo-guide.md) for a walkthrough of the live demo at <https://dunkin.adaptivecloudlab.com>.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE). You may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the software, provided that the copyright notice and permission notice from the MIT License are included in all copies or substantial portions of the software. Refer to the [LICENSE](LICENSE) file for the complete terms.
+This project is licensed under the [MIT License](LICENSE).
 
 ## Contributing
 
-Contributions are welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, branching guidance, and the pre-flight test checklist before opening an issue or submitting a pull request.
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## Disclaimer
 
@@ -266,12 +172,8 @@ Use of these materials is at your own risk.
 
 - [OpenAI Realtime API Documentation](https://platform.openai.com/docs/guides/realtime)
 - [Azure OpenAI Documentation](https://learn.microsoft.com/azure/ai-services/openai/)
-- [Azure AI Services Documentation](https://learn.microsoft.com/azure/cognitive-services/)
-- [Azure AI Search Documentation](https://learn.microsoft.com/azure/search/)
-- [Azure AI Services Tutorials](https://learn.microsoft.com/training/paths/azure-ai-fundamentals/)
-- [Azure AI Community Support](https://techcommunity.microsoft.com/t5/azure-ai/ct-p/AzureAI)
-- [Azure AI GitHub Samples](https://github.com/Azure-Samples)
-- [Azure AI Services API Reference](https://learn.microsoft.com/rest/api/cognitiveservices/)
-- [Azure AI Services Pricing](https://azure.microsoft.com/pricing/details/cognitive-services/)
+- [Azure Local Documentation](https://learn.microsoft.com/azure/azure-local/)
+- [AKS Arc Documentation](https://learn.microsoft.com/azure/aks/hybrid/)
+- [Flux v2 Documentation](https://fluxcd.io/docs/)
+- [ChromaDB Documentation](https://docs.trychroma.com/)
 - [Azure Developer CLI Documentation](https://learn.microsoft.com/azure/developer/azure-developer-cli/)
-- [Azure Developer CLI GitHub Repository](https://github.com/Azure/azure-dev)
