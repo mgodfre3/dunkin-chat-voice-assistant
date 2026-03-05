@@ -200,6 +200,7 @@ class RTLocalPipeline:
         payload: dict[str, Any] = {
             "model": LLM_MODEL,
             "messages": messages,
+            "max_tokens": 150,  # keep responses short for faster TTS
         }
         if self.temperature is not None:
             payload["temperature"] = self.temperature
@@ -353,35 +354,32 @@ class RTLocalPipeline:
         state: _ConnectionState,
         text: str,
     ) -> None:
-        """TTS the text sentence-by-sentence, streaming audio as each
-        sentence is synthesized for lower perceived latency.
-        Mutes mic input during playback to prevent echo feedback."""
+        """TTS the text as one block, stream audio, then wait for playback
+        to finish before unmuting mic."""
 
         state.tts_playing = True
-        state.audio_buffer.clear()  # discard any audio captured during processing
+        state.audio_buffer.clear()
 
-        sentences = self._split_sentences(text) if text else []
-        if not sentences:
-            sentences = [text] if text else []
+        # TTS the entire response as one piece (avoid per-sentence overhead)
+        if not text:
+            state.tts_playing = False
+            return
+
+        # Send full transcript immediately
+        await client_ws.send_json({
+            "type": "response.audio_transcript.delta",
+            "delta": text,
+        })
 
         tts_start = time.monotonic()
-        for sentence in sentences:
-            # Send transcript for this sentence immediately
-            await client_ws.send_json({
-                "type": "response.audio_transcript.delta",
-                "delta": sentence + " ",
-            })
-            # TTS → resample → stream
-            try:
-                t0 = time.monotonic()
-                pcm_data = await self._tts_to_24k_pcm(http, sentence)
-                logger.info("TTS sentence (%d chars) → %d bytes in %.1fs",
-                            len(sentence), len(pcm_data), time.monotonic() - t0)
-                await self._stream_pcm(client_ws, pcm_data)
-            except Exception as exc:
-                logger.error("TTS failed for sentence: %s", exc)
-
-        logger.info("TTS total: %.1fs for %d sentences", time.monotonic() - tts_start, len(sentences))
+        try:
+            pcm_data = await self._tts_to_24k_pcm(http, text)
+            logger.info("TTS (%d chars) → %d bytes in %.1fs",
+                        len(text), len(pcm_data), time.monotonic() - tts_start)
+            await self._stream_pcm(client_ws, pcm_data)
+        except Exception as exc:
+            logger.error("TTS failed: %s", exc)
+            pcm_data = b""
 
         # Send response.done
         await client_ws.send_json({
@@ -389,15 +387,15 @@ class RTLocalPipeline:
             "response": {"output": []},
         })
 
-        # Estimate playback duration and wait before unmuting mic
-        # This prevents the mic from capturing the tail end of TTS playback
-        total_pcm_bytes = sum(
-            len(await self._tts_to_24k_pcm(http, s)) for s in sentences
-        ) if False else 0  # skip re-synthesis; use a fixed delay instead
-        await asyncio.sleep(0.5)  # small grace period for audio to finish playing
+        # Wait for the client to finish playing the audio before unmuting mic.
+        # Playback duration = pcm_bytes / (sample_rate * bytes_per_sample)
+        playback_secs = len(pcm_data) / (TARGET_SAMPLE_RATE * 2) if pcm_data else 0
+        wait_time = playback_secs + 1.0  # +1s safety margin
+        logger.info("Waiting %.1fs for playback (%.1fs audio + 1s margin)", wait_time, playback_secs)
+        await asyncio.sleep(wait_time)
 
         state.tts_playing = False
-        state.audio_buffer.clear()  # discard anything captured during TTS
+        state.audio_buffer.clear()
 
         # Advance round-trip tracking
         identifiers = order_state_singleton.advance_round_trip(state.session_id)
@@ -446,16 +444,48 @@ class RTLocalPipeline:
 
         logger.info("STT: '%s' (%.1fs)", transcript, stt_time)
 
+        # Filter echo: if transcript substantially matches the last assistant response,
+        # it's the mic picking up TTS playback — reject it
+        if state.conversation:
+            for msg in reversed(state.conversation):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    last_reply = msg["content"].lower()
+                    t_lower = transcript.lower()
+                    # Check if >40% of the transcript words appear in the last reply
+                    t_words = set(t_lower.split())
+                    r_words = set(last_reply.split())
+                    if t_words and len(t_words & r_words) / len(t_words) > 0.4:
+                        logger.info("Filtered echo (%.0f%% overlap): '%s'",
+                                    100 * len(t_words & r_words) / len(t_words), transcript)
+                        return
+                    break
+
         # Notify client of completed transcription
         await client_ws.send_json({
             "type": "conversation.item.input_audio_transcription.completed",
             "transcript": transcript,
         })
 
-        # 2. LLM
+        # 2. LLM — add tool-use reminder for Phi-4 Mini
         state.conversation.append({"role": "user", "content": transcript})
 
         tools_schema = self._build_tools_schema()
+
+        # Inject a system reminder to force tool use when the user orders something
+        order_keywords = {"coffee", "donut", "latte", "tea", "sandwich", "bagel", "muffin",
+                          "croissant", "wrap", "order", "add", "get", "want", "medium", "large", "small"}
+        if any(w in transcript.lower().split() for w in order_keywords):
+            state.conversation.append({
+                "role": "system",
+                "content": (
+                    "IMPORTANT: The customer just mentioned a menu item. You MUST: "
+                    "1) Call the 'search' tool to find the item and its price. "
+                    "2) Then call 'update_order' with action='add' and the correct price. "
+                    "Do NOT just say you will add it — you MUST use the tools. "
+                    "Keep your spoken response to ONE short sentence."
+                ),
+            })
+
         t0 = time.monotonic()
         try:
             llm_resp = await self._llm_chat(http, state.conversation, tools_schema or None)
