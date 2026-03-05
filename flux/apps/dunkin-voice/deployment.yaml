@@ -19,13 +19,11 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
-      nodeSelector:
-        kubernetes.io/hostname: moc-lz6y09d1r1r
       imagePullSecrets:
         - name: acr-secret
       containers:
         - name: dunkin-voice
-          image: cadunkinacr.azurecr.io/dunkin-voice-assistant:slim-v2
+          image: cadunkinacr.azurecr.io/dunkin-voice-assistant:slim-v3
           ports:
             - containerPort: 8000
           envFrom:

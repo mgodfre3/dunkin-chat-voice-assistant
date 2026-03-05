@@ -19,9 +19,19 @@ spec:
         app.kubernetes.io/name: whisper-stt
         app.kubernetes.io/component: speech-to-text
     spec:
-      # Colocate with Phi-4 on GPU node (VXLAN cross-node networking broken)
+      # Run on dedicated GPU node for CUDA acceleration
       nodeSelector:
-        kubernetes.io/hostname: moc-lz6y09d1r1r
+        accelerator: nvidia
+      # Prefer the node NOT running Phi-4 (spread across GPUs)
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: phi-4-mini-gpu
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: whisper
           image: fedirz/faster-whisper-server:latest-cuda
@@ -30,13 +40,13 @@ spec:
               name: http
           env:
             - name: WHISPER__MODEL
-              value: "Systran/faster-whisper-small"
+              value: "Systran/faster-whisper-large-v3-turbo"
             - name: WHISPER__INFERENCE_DEVICE
-              value: "cpu"
+              value: "cuda"
             - name: WHISPER__COMPUTE_TYPE
-              value: "int8"
+              value: "float16"
             - name: PRELOAD_MODELS
-              value: '["Systran/faster-whisper-small"]'
+              value: '["Systran/faster-whisper-large-v3-turbo"]'
             - name: WHISPER__TTL
               value: "-1"
             - name: DEFAULT_LANGUAGE
@@ -46,10 +56,12 @@ spec:
           resources:
             requests:
               cpu: "1"
-              memory: "1Gi"
+              memory: "2Gi"
+              nvidia.com/gpu: 1
             limits:
               cpu: "3"
               memory: "4Gi"
+              nvidia.com/gpu: 1
           volumeMounts:
             - name: model-cache
               mountPath: /root/.cache/huggingface

@@ -19,9 +19,6 @@ spec:
         app.kubernetes.io/name: piper-tts
         app.kubernetes.io/component: text-to-speech
     spec:
-      # Colocate with Phi-4 on GPU node (VXLAN cross-node networking broken)
-      nodeSelector:
-        kubernetes.io/hostname: moc-lz6y09d1r1r
       containers:
         - name: piper
           image: kamilkrawiec/piper-openai-tts:latest
