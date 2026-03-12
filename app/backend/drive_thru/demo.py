@@ -19,7 +19,7 @@ class DriveThruDemoFleet:
         simulator: DriveThruSimulator,
         crm_repo: CRMRepository | None = None,
         *,
-        tick_interval_seconds: tuple[float, float] = (4.0, 9.0),
+        tick_interval_seconds: tuple[float, float] = (3.0, 12.0),
     ) -> None:
         self._simulator = simulator
         self._crm_repo = crm_repo
@@ -61,12 +61,16 @@ class DriveThruDemoFleet:
     async def _tick(self, customers: Sequence[CustomerProfile]) -> None:
         snapshot = await self._simulator.snapshot()
         cars = snapshot.get("cars", [])
-        should_spawn = len(cars) <= max(1, self._simulator.max_cars - 1)
-        if should_spawn or random.random() < 0.45:
+        active_count = len(cars)
+        pickup_count = sum(1 for c in cars if c.get("status") == "pickup")
+
+        # Spawn new cars if there's room (but not if the lane is full of pickup-waiting cars)
+        if active_count < self._simulator.max_cars and pickup_count < self._simulator.max_cars:
             profile = random.choice(customers) if customers and random.random() < 0.65 else None
             mac_address = None
             if profile and profile.bluetooth_devices:
                 mac_address = random.choice(profile.bluetooth_devices)
             await self._simulator.spawn_car(mac_address=mac_address, profile=profile)
-        else:
+        elif active_count > 0:
+            # Advance a car that isn't at pickup yet
             await self._simulator.advance_random_car()

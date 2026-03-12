@@ -164,18 +164,23 @@ class DriveThruSimulator:
             await self._broadcast_snapshot("car.complete")
 
     async def advance_random_car(self) -> None:
+        """Advance a random car to the next status, but never auto-complete.
+
+        Cars stop at PICKUP and stay there until a crew member clicks Done.
+        """
         async with self._lock:
-            candidates = [car for car in self._cars if car.status != DriveThruStatus.COMPLETE]
+            candidates = [
+                car for car in self._cars
+                if car.status not in (DriveThruStatus.COMPLETE, DriveThruStatus.PICKUP)
+            ]
             if not candidates:
                 return
             car = random.choice(candidates)
-            next_status = self._demo_progress_events.get(car.status, DriveThruStatus.COMPLETE)
+            next_status = self._demo_progress_events.get(car.status, DriveThruStatus.PICKUP)
             car.status = next_status
             car.updated_at = datetime.now(timezone.utc)
             if next_status == DriveThruStatus.PAYING and car.order_total is None:
                 car.order_total = round(random.uniform(5.0, 18.0), 2)
-            if next_status == DriveThruStatus.COMPLETE:
-                self._order_timestamps.append(datetime.now(timezone.utc))
             await self._broadcast_snapshot("car.demo_progressed")
 
     async def reset(self) -> None:
