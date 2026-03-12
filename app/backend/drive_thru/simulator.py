@@ -150,6 +150,19 @@ class DriveThruSimulator:
             self._order_timestamps.append(datetime.now(timezone.utc))
             await self._broadcast_snapshot("car.complete")
 
+    async def complete_car(self, car_id: str) -> None:
+        """Mark a car as complete by car_id (used by the crew dashboard)."""
+        async with self._lock:
+            car = next((c for c in self._cars if c.car_id == car_id), None)
+            if car is None:
+                return
+            car.status = DriveThruStatus.COMPLETE
+            car.updated_at = datetime.now(timezone.utc)
+            self._order_timestamps.append(datetime.now(timezone.utc))
+            if car.session_id:
+                self._cars_by_session.pop(car.session_id, None)
+            await self._broadcast_snapshot("car.complete")
+
     async def advance_random_car(self) -> None:
         async with self._lock:
             candidates = [car for car in self._cars if car.status != DriveThruStatus.COMPLETE]

@@ -71,3 +71,17 @@ async def stop_demo_mode(request: web.Request) -> web.Response:
         raise web.HTTPServiceUnavailable(reason="Demo fleet unavailable")
     await demo.stop()
     return web.json_response({"status": "stopped"})
+
+
+async def complete_car(request: web.Request) -> web.Response:
+    """Mark a car as complete and remove it from the queue."""
+    simulator: DriveThruSimulator = request.app["drive_thru_simulator"]
+    try:
+        payload = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(reason="Invalid JSON body")
+    car_id = payload.get("carId")
+    if not car_id:
+        raise web.HTTPBadRequest(reason="carId is required")
+    await simulator.complete_car(car_id)
+    return web.json_response({"status": "completed"})

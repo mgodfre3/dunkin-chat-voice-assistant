@@ -10,7 +10,7 @@ from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 
 from crm import CRMRepository
-from dashboard import dashboard_socket, reset_lane, spawn_car, demo_status, start_demo_mode, stop_demo_mode
+from dashboard import dashboard_socket, reset_lane, spawn_car, complete_car, demo_status, start_demo_mode, stop_demo_mode
 from drive_thru import (
     DriveThruSimulator,
     DriveThruDemoFleet,
@@ -136,6 +136,7 @@ async def create_app() -> web.Application:
 
     app.router.add_post("/simulator/spawn", spawn_car)
     app.router.add_post("/simulator/reset", reset_lane)
+    app.router.add_post("/simulator/complete", complete_car)
     app.router.add_get("/simulator/demo", demo_status)
     app.router.add_post("/simulator/demo/start", start_demo_mode)
     app.router.add_post("/simulator/demo/stop", stop_demo_mode)

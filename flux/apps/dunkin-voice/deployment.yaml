@@ -27,7 +27,7 @@ spec:
         - name: acr-secret
       containers:
         - name: dunkin-voice
-          image: cadunkinacr.azurecr.io/dunkin-voice-assistant:slim-v10
+          image: cadunkinacr.azurecr.io/dunkin-voice-assistant:slim-v11
           ports:
             - containerPort: 8000
           envFrom:

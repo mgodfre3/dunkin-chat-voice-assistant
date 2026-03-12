@@ -7,7 +7,7 @@ import { OrderFeed } from "@/components/OrderFeed";
 import { DemoControls } from "@/components/DemoControls";
 
 export default function App() {
-  const { cars, metrics, orders, connected } = useDashboardSocket();
+  const { cars, metrics, orders, connected, completeOrder } = useDashboardSocket();
   const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
 
   const selectedCar = useMemo(() => {
@@ -38,7 +38,7 @@ export default function App() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="space-y-6">
-          <Lane cars={cars} selectedCarId={selectedCar?.carId} onSelect={car => setSelectedCarId(car.carId)} />
+          <Lane cars={cars} selectedCarId={selectedCar?.carId} onSelect={car => setSelectedCarId(car.carId)} onComplete={completeOrder} />
           <OrderFeed orders={orders} />
         </div>
         <CrmPanel car={selectedCar} />

@@ -81,10 +81,19 @@ export default function useDashboardSocket() {
 
   const activeCars = useMemo(() => cars.filter(car => car.status !== "complete"), [cars]);
 
+  const completeOrder = async (carId: string) => {
+    await fetch("/simulator/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ carId })
+    });
+  };
+
   return {
     cars: activeCars,
     metrics,
     orders,
-    connected
+    connected,
+    completeOrder
   };
 }

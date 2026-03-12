@@ -27,4 +27,5 @@ export default function useDashboardSocket(): {
     metrics: DashboardMetrics | null;
     orders: OrderEvent[];
     connected: boolean;
+    completeOrder: (carId: string) => Promise<void>;
 };
