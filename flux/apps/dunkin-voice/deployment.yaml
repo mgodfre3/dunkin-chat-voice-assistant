@@ -19,6 +19,8 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
+      nodeSelector:
+        kubernetes.io/hostname: moc-lxq17mneyb4
       imagePullSecrets:
         - name: acr-secret
       containers:
