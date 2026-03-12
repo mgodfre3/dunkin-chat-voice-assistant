@@ -154,6 +154,8 @@ async def create_app() -> web.Application:
         return web.FileResponse(crew_index)
 
     app.router.add_get('/', _serve_guest)
+    # Serve crew static assets before the SPA catch-all so JS/CSS aren't swallowed.
+    app.router.add_static('/crew/assets', path=current_directory / 'static/crew/assets', name='crew_assets')
     app.router.add_get('/crew', _serve_crew)
     app.router.add_get('/crew/{tail:.*}', _serve_crew)
     app.router.add_static('/', path=current_directory / 'static', name='static')
