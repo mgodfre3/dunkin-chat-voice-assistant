@@ -1,0 +1,4 @@
+# Dockerfile.amd64-specific ignore — keeps pre-built static assets.
+**/*.pyc
+**/.env
+**/node_modules

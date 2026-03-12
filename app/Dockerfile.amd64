@@ -1,0 +1,37 @@
+# Python-only image — frontends pre-built on the host to avoid
+# esbuild QEMU issues when cross-compiling from ARM to AMD64.
+#
+# IMPORTANT: build with  --build-context static=backend/static
+# or simply override .dockerignore for this file.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+COPY ./backend/requirements.txt /app/requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
+
+COPY ./backend/ /app
+
+RUN mkdir -p /app/data
+COPY ./frontend/src/data/menuItems.json /app/data/menuItems.json
+
+COPY ./ingest_menu_local.py /tmp/ingest_menu_local.py
+ENV CHROMA_DATA_PATH=/app/chroma_data
+ENV CHROMA_COLLECTION_NAME=menu_items
+ENV MENU_ITEMS_PATH=/app/data/menuItems.json
+RUN python /tmp/ingest_menu_local.py && rm /tmp/ingest_menu_local.py
+
+# Pre-built static assets (guest + crew frontends).
+# Uses a separate .dockerignore (Dockerfile.amd64.dockerignore) that does NOT exclude static/.
+COPY ./backend/static/ /app/static/
+
+# Seed the CRM database so the demo fleet has customer profiles.
+COPY ./backend/data/crm_seed.json /tmp/crm_seed.json
+COPY ./seed_crm.py /tmp/seed_crm.py
+RUN python /tmp/seed_crm.py --db /app/data/crm.db --seed /tmp/crm_seed.json \
+    && rm /tmp/seed_crm.py /tmp/crm_seed.json
+
+CMD ["python3", "-m", "gunicorn", "app:create_app", "-b", "0.0.0.0:8000", "--worker-class", "aiohttp.GunicornWebWorker"]
