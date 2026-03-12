@@ -11,7 +11,8 @@ import {
     ExtensionMiddleTierToolResponse,
     ResponseInputAudioTranscriptionCompleted,
     ExtensionSessionMetadata,
-    ExtensionRoundTripToken
+    ExtensionRoundTripToken,
+    ExtensionCustomerGreeting
 } from "@/types";
 
 type Parameters = {
@@ -35,6 +36,7 @@ type Parameters = {
     onReceivedResponseAudioTranscriptDelta?: (message: ResponseAudioTranscriptDelta) => void;
     onReceivedInputAudioTranscriptionCompleted?: (message: ResponseInputAudioTranscriptionCompleted) => void;
     onReceivedError?: (message: Message) => void;
+    onReceivedCustomerGreeting?: (message: ExtensionCustomerGreeting) => void;
 };
 
 export default function useRealTime({
@@ -55,7 +57,8 @@ export default function useRealTime({
     onReceivedInputAudioTranscriptionCompleted,
     onReceivedSessionMetadata,
     onReceivedRoundTripToken,
-    onReceivedError
+    onReceivedError,
+    onReceivedCustomerGreeting
 }: Parameters) {
     const wsEndpoint = useDirectAoaiApi
         ? `${aoaiEndpointOverride}/openai/realtime?api-key=${aoaiApiKeyOverride}&deployment=${aoaiModelOverride}&api-version=2024-10-01-preview`
@@ -69,7 +72,7 @@ export default function useRealTime({
         shouldReconnect: () => true
     });
 
-    const startSession = () => {
+    const startSession = (metadata?: Record<string, unknown>) => {
         const command: SessionUpdateCommand = {
             type: "session.update",
             session: {
@@ -81,6 +84,10 @@ export default function useRealTime({
                 }
             }
         };
+
+        if (metadata) {
+            command.session.metadata = metadata;
+        }
 
         if (enableInputAudioTranscription) {
             command.session.input_audio_transcription = {
@@ -143,6 +150,9 @@ export default function useRealTime({
                 break;
             case "extension.round_trip_token":
                 onReceivedRoundTripToken?.(message as ExtensionRoundTripToken);
+                break;
+            case "extension.customer_greeting":
+                onReceivedCustomerGreeting?.(message as ExtensionCustomerGreeting);
                 break;
             case "error":
                 onReceivedError?.(message);

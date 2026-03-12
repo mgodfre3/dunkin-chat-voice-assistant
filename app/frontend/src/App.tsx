@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import CustomerGreetingBanner from "@/components/ui/customer-greeting-banner";
 
 import StatusMessage from "@/components/ui/status-message";
 import MenuPanel from "@/components/ui/menu-panel";
@@ -16,7 +17,7 @@ import useAzureSpeech from "@/hooks/useAzureSpeech";
 import useAudioRecorder from "@/hooks/useAudioRecorder";
 import useAudioPlayer from "@/hooks/useAudioPlayer";
 
-import { ExtensionMiddleTierToolResponse, ExtensionRoundTripToken, ExtensionSessionMetadata } from "./types";
+import { ExtensionMiddleTierToolResponse, ExtensionRoundTripToken, ExtensionSessionMetadata, CustomerGreetingPayload } from "./types";
 
 import { ThemeProvider, useTheme } from "./context/theme-context";
 import { DummyDataProvider, useDummyDataContext } from "@/context/dummy-data-context";
@@ -25,6 +26,7 @@ import { AuthProvider, useAuth } from "@/context/auth-context";
 
 import dummyTranscriptsData from "@/data/dummyTranscripts.json";
 import dummyOrderData from "@/data/dummyOrder.json";
+import { demoDevices } from "@/data/demoDevices";
 import azureLogo from "@/assets/azurelogo.svg";
 import dunkinLogo from "@/assets/dunkin-logo.svg";
 
@@ -94,9 +96,21 @@ function CoffeeApp() {
         return stored === null ? true : stored === "true";
     });
 
+    const [selectedDeviceMac, setSelectedDeviceMac] = useState<string | null>(() => {
+        if (typeof window === "undefined") return demoDevices[0]?.mac ?? null;
+        return localStorage.getItem("selectedDeviceMac") || demoDevices[0]?.mac || null;
+    });
+    const [customerGreeting, setCustomerGreeting] = useState<CustomerGreetingPayload | null>(null);
+
     useEffect(() => {
         localStorage.setItem("showSessionTokens", showSessionTokens.toString());
     }, [showSessionTokens]);
+
+    useEffect(() => {
+        if (selectedDeviceMac) {
+            localStorage.setItem("selectedDeviceMac", selectedDeviceMac);
+        }
+    }, [selectedDeviceMac]);
 
     const handleSessionIdentifiers = (message: ExtensionSessionMetadata | ExtensionRoundTripToken) => {
         setSessionIdentifiers({
@@ -144,6 +158,9 @@ function CoffeeApp() {
                 timestamp: new Date()
             };
             setTranscripts(prev => [...prev, newTranscriptItem]);
+        },
+        onReceivedCustomerGreeting: message => {
+            setCustomerGreeting(message.customer);
         },
         onReceivedResponseDone: message => {
             const transcript = message.response.output.map(output => output.content?.map(content => content.transcript).join(" ")).join(" ");
@@ -222,6 +239,7 @@ function CoffeeApp() {
     const onToggleListening = async () => {
         if (!isRecording) {
             setSessionIdentifiers(null);
+            setCustomerGreeting(null);
 
             // Start session and playback immediately, but delay mic capture until the greeting finishes.
             isSessionActiveRef.current = true;
@@ -235,7 +253,7 @@ function CoffeeApp() {
                 azureSpeech.startSession();
                 await startAudioRecording();
             } else {
-                realtime.startSession();
+                realtime.startSession(selectedDeviceMac ? { deviceMac: selectedDeviceMac } : undefined);
 
                 // Safety: if we never receive the greeting completion, start the mic after a short timeout.
                 window.setTimeout(() => {
@@ -294,6 +312,9 @@ function CoffeeApp() {
                             isMobile={isMobile}
                             showSessionTokens={showSessionTokens}
                             onShowSessionTokensChange={setShowSessionTokens}
+                            selectedDeviceMac={selectedDeviceMac}
+                            onSelectDevice={setSelectedDeviceMac}
+                            devices={demoDevices}
                         />
                         {authEnabled && (
                             <Button variant="ghost" size="icon" className="rounded-full" onClick={logout} title="Logout">
@@ -337,6 +358,9 @@ function CoffeeApp() {
                     {/* Center Panel - Recording Button and Order Summary */}
                     <Card className="p-6 md:overflow-auto">
                         <div className="space-y-8">
+                            {customerGreeting && (
+                                <CustomerGreetingBanner greeting={customerGreeting} onClear={() => setCustomerGreeting(null)} />
+                            )}
                             <OrderSummary order={useDummyData ? dummyOrder : order} />
                             <div className="mb-4 flex flex-col items-center justify-center">
                                 <Button

@@ -657,5 +657,13 @@ class RTLocalPipeline:
     # Public API
     # ------------------------------------------------------------------
 
-    def attach_to_app(self, app: web.Application, path: str) -> None:
+    def attach_to_app(
+        self,
+        app: web.Application,
+        path: str,
+        *,
+        simulator=None,
+        crm_repo=None,
+    ) -> None:
+        # Local pipeline currently ignores simulator/CRM hooks but keeps signature parity
         app.router.add_get(path, self._websocket_handler)

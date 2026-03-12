@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable, Optional
 
 import chromadb
 
@@ -12,6 +12,8 @@ from rtmt import RTMiddleTier, Tool, ToolResult, ToolResultDirection
 logger = logging.getLogger(__name__)
 
 __all__ = ["attach_tools_rtmt"]
+
+OrderObserver = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
 # Extras may only be applied to specific beverage categories.
@@ -172,7 +174,7 @@ update_order_tool_schema = {
     }
 }
 
-async def update_order(args, session_id: str) -> ToolResult:
+async def update_order(args, session_id: str, order_observer: Optional[OrderObserver] = None) -> ToolResult:
     """Update the current order by adding or removing items."""
 
     logger.info("Updating order for session %s with payload %s", session_id, args)
@@ -213,7 +215,10 @@ async def update_order(args, session_id: str) -> ToolResult:
     )
 
     order_summary = order_state_singleton.get_order_summary(session_id)
-    json_order_summary = order_summary.model_dump_json()
+    summary_payload = order_summary.model_dump()
+    if order_observer is not None:
+        await order_observer(session_id, summary_payload)
+    json_order_summary = json.dumps(summary_payload)
     logger.debug("Session %s order summary after update: %s", session_id, json_order_summary)
 
     return ToolResult(json_order_summary, ToolResultDirection.TO_CLIENT)
@@ -242,11 +247,16 @@ async def get_order(_args: Any, session_id: str) -> ToolResult:
 def attach_tools_rtmt(
     rtmt: RTMiddleTier,
     chroma_collection: chromadb.Collection,
+    order_observer: Optional[OrderObserver] = None,
 ) -> None:
     """Attach search and order tools to the RTMiddleTier instance."""
 
     rtmt.tools["search"] = Tool(schema=search_tool_schema, target=lambda args: search(chroma_collection, args))
-    rtmt.tools["update_order"] = Tool(schema=update_order_tool_schema, target=lambda args, session_id: update_order(args, session_id))
+
+    async def update_order_wrapper(args, session_id):
+        return await update_order(args, session_id, order_observer=order_observer)
+
+    rtmt.tools["update_order"] = Tool(schema=update_order_tool_schema, target=update_order_wrapper)
     rtmt.tools["get_order"] = Tool(schema=get_order_tool_schema, target=lambda args, session_id: get_order(args, session_id))
 
 

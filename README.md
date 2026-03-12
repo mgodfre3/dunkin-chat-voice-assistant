@@ -57,6 +57,7 @@ graph LR
 - **Live order synchronization**: Function calls update a shared cart so the order panel stays in sync.
 - **Multilingual support**: Real-time transcription and translation across English, Spanish, Mandarin, French, and more.
 - **Drive-through UX**: Designed for kiosk, curbside, and drive-thru ordering flows.
+- **Employee command deck**: Operators can open <https://dunkin.adaptivecloudlab.com/crew> to monitor lane metrics, greet recognized guests, and control the always-on simulator.
 
 ## Upstream Acknowledgment
 

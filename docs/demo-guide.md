@@ -52,6 +52,16 @@ graph LR
 - **Tool Calling** — GPT-4o uses function calling to search the menu, update orders, and calculate totals.
 - **Infrastructure** — AKS Arc cluster on Azure Local, managed via Flux GitOps.
 
+## Employee Command Deck
+
+- **Lab URL** — open <https://dunkin.adaptivecloudlab.com/crew> (self-signed TLS) next to the guest experience to show crews' view during demos.
+
+### Running the employee dashboard locally
+
+1. From `app/employee-dashboard`, run `npm install && npm run dev` (port `4174` by default).
+2. Open the dev server in a browser tab alongside the guest experience.
+3. Watch the Demo Controls badge — it shows whether the auto-run fleet is live. Use **Start Demo**, **Pause Demo**, **Reset Lane**, or **Add Demo Car** buttons as you narrate the story.
+
 ## Infrastructure Details
 
 | Component | Detail |
@@ -72,6 +82,7 @@ graph LR
 4. Say: *"Can I get a large iced coffee and a glazed donut?"*
 5. Watch the order panel update with items and totals
 6. Say: *"That's all, thanks!"* to complete the order
+7. (Optional) Keep an employee dashboard tab open ( <https://dunkin.adaptivecloudlab.com/crew> ) to showcase the lane view and Demo Controls while the fleet auto-runs
 
 ## About This Project
 

@@ -8,14 +8,25 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { useDummyDataContext } from "@/context/dummy-data-context";
 import { useAzureSpeechOnContext } from "@/context/azure-speech-context";
 import { Tooltip } from "@/components/ui/tooltip";
+import { DemoDevice } from "@/data/demoDevices";
 
 interface SettingsProps {
     isMobile: boolean;
     showSessionTokens: boolean;
     onShowSessionTokensChange: (checked: boolean) => void;
+    selectedDeviceMac: string | null;
+    onSelectDevice: (mac: string | null) => void;
+    devices: DemoDevice[];
 }
 
-export default function Settings({ isMobile, showSessionTokens, onShowSessionTokensChange }: SettingsProps) {
+export default function Settings({
+    isMobile,
+    showSessionTokens,
+    onShowSessionTokensChange,
+    selectedDeviceMac,
+    onSelectDevice,
+    devices
+}: SettingsProps) {
     const [isDarkMode, setIsDarkMode] = useState(() => {
         return localStorage.getItem("isDarkMode") === "true";
     });
@@ -112,6 +123,31 @@ export default function Settings({ isMobile, showSessionTokens, onShowSessionTok
                         aria-label="Toggle session token visibility"
                     />
                     <span className="text-xs text-gray-500 dark:text-gray-400">{showSessionTokens ? "Visible" : "Hidden"}</span>
+                </div>
+            </div>
+            <div className="flex items-start justify-between">
+                <div className="flex-1 space-y-0.5">
+                    <Label htmlFor="device-selector" className="text-gray-900 dark:text-gray-100">
+                        Recognized Device
+                    </Label>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                        Pick a demo Bluetooth MAC to preload CRM personalization
+                    </p>
+                </div>
+                <div className="ml-4 w-48">
+                    <select
+                        id="device-selector"
+                        className="w-full rounded-md border border-gray-200 px-2 py-1 text-sm text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                        value={selectedDeviceMac ?? ""}
+                        onChange={event => onSelectDevice(event.target.value || null)}
+                    >
+                        <option value="">No device</option>
+                        {devices.map(device => (
+                            <option key={device.mac} value={device.mac}>
+                                {device.label}
+                            </option>
+                        ))}
+                    </select>
                 </div>
             </div>
         </div>

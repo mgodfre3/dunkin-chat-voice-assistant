@@ -10,6 +10,8 @@ from aiohttp import web
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
+from crm import CRMRepository
+from drive_thru import DriveThruSimulator
 from order_state import SessionIdentifiers, order_state_singleton
 
 logger = logging.getLogger("coffee-chat")
@@ -77,6 +79,10 @@ class RTMiddleTier:
         self._token_provider = None
         self._session_map: dict[web.WebSocketResponse, str] = {}
         self._sent_greeting: set[str] = set()
+        self._session_metadata: dict[str, dict[str, Any]] = {}
+        self._session_customer_sent: set[str] = set()
+        self._crm_repo: CRMRepository | None = None
+        self._simulator: DriveThruSimulator | None = None
         if voice_choice is not None:
             logger.info("Realtime voice choice set to %s", voice_choice)
         if isinstance(credentials, AzureKeyCredential):
@@ -196,6 +202,7 @@ class RTMiddleTier:
     async def _process_message_to_server(self, msg: str, ws: web.WebSocketResponse) -> str | None:
         message = json.loads(msg.data)
         updated_message = msg.data
+        session_id = self._session_map.get(ws)
         if message is not None:
             match message["type"]:
                 case "session.update":
@@ -212,6 +219,9 @@ class RTMiddleTier:
                         session["voice"] = self.voice_choice
                     session["tool_choice"] = "auto" if len(self.tools) > 0 else "none"
                     session["tools"] = [tool.schema for tool in self.tools.values()]
+                    metadata = session.get("metadata") or {}
+                    if session_id is not None and metadata:
+                        await self._handle_session_metadata(ws, session_id, metadata)
                     updated_message = json.dumps(message)
 
         return updated_message
@@ -280,7 +290,11 @@ class RTMiddleTier:
                     pass
                 finally:
                     if session_id is not None:
+                        if self._simulator is not None:
+                            await self._simulator.complete_session(session_id)
                         order_state_singleton.delete_session(session_id)
+                        self._session_metadata.pop(session_id, None)
+                        self._session_customer_sent.discard(session_id)
                     # Clean up the session map when the connection is closed
                     if ws in self._session_map:
                         del self._session_map[ws]
@@ -292,9 +306,47 @@ class RTMiddleTier:
         # Create a new session for each WebSocket connection
         session_id = order_state_singleton.create_session()
         self._session_map[ws] = session_id
+        if self._simulator is not None:
+            await self._simulator.assign_session(session_id)
 
         await self._forward_messages(ws)
         return ws
     
-    def attach_to_app(self, app: web.Application, path: str) -> None:
+    def attach_to_app(
+        self,
+        app: web.Application,
+        path: str,
+        *,
+        simulator: DriveThruSimulator | None = None,
+        crm_repo: CRMRepository | None = None,
+    ) -> None:
+        self._simulator = simulator
+        self._crm_repo = crm_repo
         app.router.add_get(path, self._websocket_handler)
+
+    async def _handle_session_metadata(self, ws: web.WebSocketResponse, session_id: str, metadata: dict[str, Any]) -> None:
+        stored = self._session_metadata.setdefault(session_id, {})
+        stored.update(metadata)
+        device_mac = metadata.get("deviceMac")
+        if device_mac and self._crm_repo is not None and session_id not in self._session_customer_sent:
+            profile = self._crm_repo.get_customer_by_mac(device_mac)
+            if profile is not None:
+                await ws.send_json({
+                    "type": "extension.customer_greeting",
+                    "customer": {
+                        "id": profile.id,
+                        "name": profile.name,
+                        "rewardsStatus": profile.rewards_status,
+                        "loyaltyScore": profile.loyalty_score,
+                        "loyaltyGoal": profile.loyalty_goal,
+                        "curbsidePreferred": profile.curbside_preferred,
+                        "favoriteItems": [item.model_dump() for item in profile.favorite_items],
+                        "usualOrder": [item.model_dump() for item in profile.usual_order],
+                        "suggestedSales": profile.suggested_sales,
+                        "bluetoothDevices": profile.bluetooth_devices,
+                        "lastVisit": profile.last_visit_iso,
+                    },
+                })
+                self._session_customer_sent.add(session_id)
+                if self._simulator is not None:
+                    await self._simulator.attach_crm_profile(session_id, profile, device_mac)

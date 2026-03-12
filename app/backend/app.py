@@ -9,6 +9,15 @@ from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureDeveloperCliCredential, DefaultAzureCredential
 from dotenv import load_dotenv
 
+from crm import CRMRepository
+from dashboard import dashboard_socket, reset_lane, spawn_car, demo_status, start_demo_mode, stop_demo_mode
+from drive_thru import (
+    DriveThruSimulator,
+    DriveThruDemoFleet,
+    InMemorySimulatorStateStore,
+    PostgresSimulatorStateStore,
+    RedisSimulatorStateStore,
+)
 from rtmt import RTMiddleTier
 from rtmt_local import RTLocalPipeline
 from tools import attach_tools_rtmt
@@ -35,6 +44,25 @@ async def create_app() -> web.Application:
     use_local = _get_bool_env("USE_LOCAL_PIPELINE", True)
 
     app = web.Application()
+
+    crm_db_path = os.environ.get("CRM_DB_PATH")
+    crm_repo = CRMRepository.from_env(crm_db_path)
+    app["crm_repo"] = crm_repo
+
+    simulator = await _create_simulator_from_env()
+    app["drive_thru_simulator"] = simulator
+
+    demo_fleet = DriveThruDemoFleet(simulator, crm_repo=crm_repo)
+    app["drive_thru_demo"] = demo_fleet
+
+    if _get_bool_env("DRIVE_THRU_DEMO_AUTOSTART", True):
+        await demo_fleet.start()
+
+    async def _stop_simulator(_app: web.Application) -> None:
+        await demo_fleet.stop()
+        await simulator.stop()
+
+    app.on_cleanup.append(_stop_simulator)
 
     if use_local:
         logger.info("Using LOCAL pipeline (Whisper STT → Phi-4 Mini → Piper TTS)")
@@ -91,15 +119,88 @@ async def create_app() -> web.Application:
     embedding_fn = ONNXMiniLM_L6_V2()
     chroma_collection = chroma_client.get_collection(chroma_collection_name, embedding_function=embedding_fn)
 
-    attach_tools_rtmt(rtmt, chroma_collection=chroma_collection)
+    async def _order_observer(session_id: str, summary: dict) -> None:
+        await simulator.record_order_update(session_id, summary)
 
-    rtmt.attach_to_app(app, "/realtime")
+    attach_tools_rtmt(
+        rtmt,
+        chroma_collection=chroma_collection,
+        order_observer=_order_observer,
+    )
+
+    rtmt.attach_to_app(app, "/realtime", simulator=simulator, crm_repo=crm_repo)
+
+    app.router.add_get("/crm/customers", _handle_list_customers)
+    app.router.add_get("/crm/customers/{customer_id}", _handle_get_customer)
+    app.router.add_get("/crm/devices/{mac_address}", _handle_lookup_device)
+
+    app.router.add_post("/simulator/spawn", spawn_car)
+    app.router.add_post("/simulator/reset", reset_lane)
+    app.router.add_get("/simulator/demo", demo_status)
+    app.router.add_post("/simulator/demo/start", start_demo_mode)
+    app.router.add_post("/simulator/demo/stop", stop_demo_mode)
+    app.router.add_get("/dashboard", dashboard_socket)
 
     current_directory = Path(__file__).parent
-    app.add_routes([web.get('/', lambda _: web.FileResponse(current_directory / 'static/index.html'))])
+    guest_index = current_directory / 'static/index.html'
+    crew_index = current_directory / 'static/crew/index.html'
+
+    async def _serve_guest(_request: web.Request) -> web.StreamResponse:
+        return web.FileResponse(guest_index)
+
+    async def _serve_crew(_request: web.Request) -> web.StreamResponse:
+        if not crew_index.exists():
+            raise web.HTTPNotFound()
+        return web.FileResponse(crew_index)
+
+    app.router.add_get('/', _serve_guest)
+    app.router.add_get('/crew', _serve_crew)
+    app.router.add_get('/crew/{tail:.*}', _serve_crew)
     app.router.add_static('/', path=current_directory / 'static', name='static')
 
     return app
+
+
+async def _create_simulator_from_env() -> DriveThruSimulator:
+    max_cars = int(os.environ.get("DRIVE_THRU_MAX_CARS", 4))
+    redis_url = os.environ.get("DRIVE_THRU_REDIS_URL")
+    postgres_dsn = os.environ.get("DRIVE_THRU_POSTGRES_DSN")
+
+    state_store = None
+    if redis_url:
+        state_store = RedisSimulatorStateStore(redis_url)
+    elif postgres_dsn:
+        state_store = PostgresSimulatorStateStore(postgres_dsn)
+    else:
+        state_store = InMemorySimulatorStateStore()
+
+    simulator = DriveThruSimulator(max_cars=max_cars, state_store=state_store)
+    await simulator.start()
+    return simulator
+
+
+async def _handle_list_customers(request: web.Request) -> web.Response:
+    repo: CRMRepository = request.app["crm_repo"]
+    customers = [profile.model_dump() for profile in repo.list_customers()]
+    return web.json_response({"customers": customers})
+
+
+async def _handle_get_customer(request: web.Request) -> web.Response:
+    repo: CRMRepository = request.app["crm_repo"]
+    customer_id = request.match_info["customer_id"]
+    profile = repo.get_customer(customer_id)
+    if not profile:
+        raise web.HTTPNotFound()
+    return web.json_response(profile.model_dump())
+
+
+async def _handle_lookup_device(request: web.Request) -> web.Response:
+    repo: CRMRepository = request.app["crm_repo"]
+    mac_address = request.match_info["mac_address"]
+    profile = repo.get_customer_by_mac(mac_address)
+    if not profile:
+        raise web.HTTPNotFound()
+    return web.json_response(profile.model_dump())
 
 
 if __name__ == "__main__":

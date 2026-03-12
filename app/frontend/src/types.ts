@@ -27,6 +27,7 @@ export type SessionUpdateCommand = {
         input_audio_transcription?: {
             model: "whisper-1";
         };
+        metadata?: Record<string, unknown>;
     };
 };
 
@@ -97,4 +98,30 @@ export type ExtensionRoundTripToken = {
     sessionToken: string;
     roundTripIndex: number;
     roundTripToken: string;
+};
+
+export type CustomerOrderItem = {
+    item: string;
+    size?: string | null;
+    quantity: number;
+    price?: number | null;
+};
+
+export type CustomerGreetingPayload = {
+    id: string;
+    name: string;
+    rewardsStatus: string;
+    loyaltyScore: number;
+    loyaltyGoal: number;
+    curbsidePreferred: boolean;
+    favoriteItems: CustomerOrderItem[];
+    usualOrder: CustomerOrderItem[];
+    suggestedSales: string[];
+    bluetoothDevices: string[];
+    lastVisit?: string | null;
+};
+
+export type ExtensionCustomerGreeting = {
+    type: "extension.customer_greeting";
+    customer: CustomerGreetingPayload;
 };

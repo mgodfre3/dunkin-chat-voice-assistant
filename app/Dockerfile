@@ -1,12 +1,25 @@
-# Stage 1: Build the Vite frontend
+# Stage 1: Build both Vite frontends
 FROM node:20-slim AS build-stage
 
-WORKDIR /frontend
-COPY frontend ./
+WORKDIR /workspace
+
+COPY frontend ./frontend
+COPY employee-dashboard ./employee-dashboard
+
+WORKDIR /workspace/frontend
 
 # Create a safe default .env if one is not present.
 RUN if [ ! -f .env ]; then \
       printf "VITE_AUTH_URL=\nVITE_AUTH_ENABLED=false\n" > .env; \
+    fi
+
+RUN npm ci
+RUN npm run build
+
+WORKDIR /workspace/employee-dashboard
+
+RUN if [ ! -f .env ]; then \
+      printf "VITE_DASHBOARD_PLACEHOLDER=true\n" > .env; \
     fi
 
 RUN npm ci
@@ -39,6 +52,6 @@ ENV MENU_ITEMS_PATH=/app/data/menuItems.json
 RUN python /tmp/ingest_menu_local.py && rm /tmp/ingest_menu_local.py
 
 # Copy the freshly-built frontend assets
-COPY --from=build-stage /backend/static /app/static
+COPY --from=build-stage /workspace/backend/static /app/static
 
 CMD ["python3", "-m", "gunicorn", "app:create_app", "-b", "0.0.0.0:8000", "--worker-class", "aiohttp.GunicornWebWorker"]

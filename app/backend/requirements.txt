@@ -11,3 +11,5 @@ openai==1.54.3
 pydantic>=2,<3
 python-dotenv==1.0.1
 rich==13.9.4
+redis>=5.0.1
+asyncpg>=0.29.0
