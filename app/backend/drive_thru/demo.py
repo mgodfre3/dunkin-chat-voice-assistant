@@ -70,4 +70,3 @@ class DriveThruDemoFleet:
             await self._simulator.spawn_car(mac_address=mac_address, profile=profile)
         else:
             await self._simulator.advance_random_car()
-*** End Patch
