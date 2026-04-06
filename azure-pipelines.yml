@@ -1,0 +1,179 @@
+# Azure DevOps CI/CD Pipeline for Dunkin Voice Assistant
+# Stages: Lint → Test → Build & Scan → Push → Deploy (Flux GitOps)
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - app/**
+      - flux/**
+      - scripts/**
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  acrName: cadunkinacr
+  acrLoginServer: cadunkinacr.azurecr.io
+  imageName: dunkin-voice-assistant
+  imageTag: $(Build.SourceVersion)
+  fluxDeploymentPath: flux/apps/dunkin-voice/deployment.yaml
+  pythonVersion: "3.11"
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  # ───────────────────────────────────────────────────────
+  # Stage 1: Lint & Static Analysis
+  # ───────────────────────────────────────────────────────
+  - stage: Lint
+    displayName: "Lint & Static Analysis"
+    jobs:
+      - job: PythonLint
+        displayName: "Python Lint (ruff)"
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(pythonVersion)
+          - script: |
+              pip install ruff
+              ruff check app/backend/ --output-format=github
+            displayName: "Run ruff linter"
+
+      - job: ManifestLint
+        displayName: "Kubernetes Manifest Lint"
+        steps:
+          - script: |
+              curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+              ./kubeconform -summary -strict flux/apps/dunkin-voice/*.yaml
+            displayName: "Validate K8s manifests with kubeconform"
+
+  # ───────────────────────────────────────────────────────
+  # Stage 2: Unit Tests
+  # ───────────────────────────────────────────────────────
+  - stage: Test
+    displayName: "Unit Tests"
+    dependsOn: Lint
+    jobs:
+      - job: PythonTests
+        displayName: "pytest"
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: $(pythonVersion)
+          - script: |
+              cd app/backend
+              pip install -r requirements.txt
+              pip install pytest pytest-cov pytest-asyncio
+            displayName: "Install dependencies"
+          - script: |
+              cd app/backend
+              python -m pytest tests/ -v \
+                --junitxml=$(Build.ArtifactStagingDirectory)/test-results.xml \
+                --cov=. --cov-report=xml:$(Build.ArtifactStagingDirectory)/coverage.xml \
+                --cov-report=term-missing
+            displayName: "Run unit tests"
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: "$(Build.ArtifactStagingDirectory)/test-results.xml"
+              testRunTitle: "Python Unit Tests"
+          - task: PublishCodeCoverageResults@2
+            condition: always()
+            inputs:
+              summaryFileLocation: "$(Build.ArtifactStagingDirectory)/coverage.xml"
+
+  # ───────────────────────────────────────────────────────
+  # Stage 3: Build Container Image & Security Scan
+  # ───────────────────────────────────────────────────────
+  - stage: Build
+    displayName: "Build & Scan"
+    dependsOn: Test
+    jobs:
+      - job: BuildAndScan
+        displayName: "Docker Build + Trivy Scan"
+        steps:
+          - task: Docker@2
+            displayName: "Build container image"
+            inputs:
+              command: build
+              repository: $(imageName)
+              dockerfile: app/Dockerfile.amd64
+              buildContext: app
+              tags: |
+                $(imageTag)
+                latest
+
+          - script: |
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+              trivy image --exit-code 1 --severity HIGH,CRITICAL \
+                --ignore-unfixed \
+                --format table \
+                $(imageName):$(imageTag)
+            displayName: "Trivy vulnerability scan"
+            continueOnError: true
+
+          - task: Docker@2
+            displayName: "Push to ACR"
+            inputs:
+              command: push
+              containerRegistry: $(acrName)
+              repository: $(imageName)
+              tags: |
+                $(imageTag)
+                latest
+
+  # ───────────────────────────────────────────────────────
+  # Stage 4: Deploy via GitOps (update image tag in Flux)
+  # ───────────────────────────────────────────────────────
+  - stage: Deploy
+    displayName: "Deploy (GitOps)"
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: UpdateFluxManifest
+        displayName: "Update image tag in Flux manifest"
+        steps:
+          - checkout: self
+            persistCredentials: true
+          - script: |
+              git config user.email "azuredevops@dunkin.com"
+              git config user.name "Azure DevOps Pipeline"
+
+              # Update image tag from :latest to :$imageTag
+              sed -i "s|image: $(acrLoginServer)/$(imageName):.*|image: $(acrLoginServer)/$(imageName):$(imageTag)|" \
+                $(fluxDeploymentPath)
+
+              git add $(fluxDeploymentPath)
+              git commit -m "deploy: update image to $(imageTag) [skip ci]
+
+              Triggered by pipeline $(Build.BuildNumber)
+              Source commit: $(Build.SourceVersion)"
+
+              git push origin HEAD:main
+            displayName: "Commit updated image tag"
+
+  # ───────────────────────────────────────────────────────
+  # Stage 5: Post-Deploy Smoke Tests
+  # ───────────────────────────────────────────────────────
+  - stage: SmokeTest
+    displayName: "Post-Deploy Smoke Tests"
+    dependsOn: Deploy
+    condition: succeeded()
+    jobs:
+      - job: SmokeTests
+        displayName: "Run smoke tests"
+        steps:
+          - script: |
+              # Wait for Flux to reconcile (up to 5 min)
+              echo "Waiting 120s for Flux reconciliation..."
+              sleep 120
+              chmod +x scripts/smoke_test.sh
+              ./scripts/smoke_test.sh http://dunkin.adaptivecloudlab.com
+            displayName: "Run smoke tests against live endpoint"

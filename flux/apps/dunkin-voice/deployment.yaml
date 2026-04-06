@@ -17,6 +17,7 @@ spec:
       labels:
         app: dunkin-voice-assistant
     spec:
+      automountServiceAccountToken: false
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -28,6 +29,11 @@ spec:
           image: cadunkinacr.azurecr.io/dunkin-voice-assistant:latest
           ports:
             - containerPort: 8000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
           envFrom:
             - configMapRef:
                 name: dunkin-config
