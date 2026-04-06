@@ -31,6 +31,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: dunkin-config
+            - secretRef:
+                name: dunkin-secrets
           resources:
             requests:
               cpu: "500m"
