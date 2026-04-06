@@ -4,14 +4,10 @@ metadata:
   name: dunkin-voice-service
   namespace: dunkin-voice
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: dunkin-voice-assistant
   ports:
-    - name: https
-      protocol: TCP
-      port: 443
-      targetPort: 443
     - name: http
       protocol: TCP
       port: 80
