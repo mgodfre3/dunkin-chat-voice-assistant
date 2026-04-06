@@ -5,5 +5,5 @@ resources:
   - sources/helm-repos.yaml
   - cert-manager/helmrelease.yaml
   - trust-manager/helmrelease.yaml
-  - foundry-operator/helmrelease.yaml
+  # - foundry-operator/helmrelease.yaml  # Disabled: chart has YAML error (duplicate label key)
   - nvidia-device-plugin/daemonset.yaml
