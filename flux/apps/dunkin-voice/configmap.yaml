@@ -14,3 +14,4 @@ data:
   # Azure OpenAI Realtime
   AZURE_OPENAI_REALTIME_VOICE_CHOICE: "coral"
   AZURE_OPENAI_REALTIME_DEPLOYMENT: "gpt-4o-realtime-preview"
+  AZURE_OPENAI_EASTUS2_ENDPOINT: "wss://acx-dunkin-edge-openai.openai.azure.com/"

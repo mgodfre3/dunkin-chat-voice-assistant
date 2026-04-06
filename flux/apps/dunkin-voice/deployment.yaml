@@ -21,20 +21,16 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
-      nodeSelector:
-        kubernetes.io/hostname: moc-lxq17mneyb4
       imagePullSecrets:
         - name: acr-secret
       containers:
         - name: dunkin-voice
-          image: cadunkinacr.azurecr.io/dunkin-voice-assistant:slim-v12
+          image: cadunkinacr.azurecr.io/dunkin-voice-assistant:latest
           ports:
             - containerPort: 8000
           envFrom:
             - configMapRef:
                 name: dunkin-config
-            - secretRef:
-                name: dunkin-secrets
           resources:
             requests:
               cpu: "500m"
@@ -78,6 +74,7 @@ spec:
         - name: tls-certs
           secret:
             secretName: dunkin-tls
+            optional: true
         - name: nginx-conf
           configMap:
             name: nginx-tls-config
