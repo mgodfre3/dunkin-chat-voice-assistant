@@ -32,8 +32,6 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
-            runAsNonRoot: true
-            runAsUser: 1000
           envFrom:
             - configMapRef:
                 name: dunkin-config
