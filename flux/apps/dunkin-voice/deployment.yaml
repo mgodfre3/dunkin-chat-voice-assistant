@@ -21,6 +21,8 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
+      imagePullSecrets:
+        - name: acr-secret
       containers:
         - name: dunkin-voice
           image: cadunkinacr.azurecr.io/dunkin-voice-assistant:latest

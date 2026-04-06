@@ -1,6 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - dunkin-voice/acr-secret.yaml
   - dunkin-voice/deployment.yaml
   - dunkin-voice/service.yaml
   - dunkin-voice/configmap.yaml
