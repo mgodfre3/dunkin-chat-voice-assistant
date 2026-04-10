@@ -279,15 +279,21 @@ class RTMiddleTier:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             new_msg = await self._process_message_to_client(msg, ws, target_ws)
                             if new_msg is not None:
+                                if ws.closed:
+                                    break
                                 await ws.send_str(new_msg)
                         else:
                             logger.warning("Unexpected message type from server: %s", msg.type)
 
                 try:
                     await asyncio.gather(from_client_to_server(), from_server_to_client())
-                except ConnectionResetError:
-                    # Ignore the errors resulting from the client disconnecting the socket
+                except (ConnectionResetError, ConnectionError,
+                        aiohttp.ClientError, asyncio.CancelledError):
+                    # Ignore errors from the client disconnecting (e.g. browser refresh)
                     pass
+                except Exception:
+                    logger.exception("Unexpected error in realtime message forwarding")
+
                 finally:
                     if session_id is not None:
                         if self._simulator is not None:
