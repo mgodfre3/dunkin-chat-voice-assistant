@@ -79,3 +79,42 @@ def test_repo_lists_customers(tmp_path):
 
     assert len(profiles) == 1
     assert profiles[0].loyalty_score == 900
+
+
+def test_auto_seeds_from_json(tmp_path):
+    db_path = tmp_path / "data" / "crm.db"
+    seed_file = tmp_path / "data" / "crm_seed.json"
+    seed_file.parent.mkdir(parents=True, exist_ok=True)
+    seed_file.write_text(json.dumps({
+        "customers": [{
+            "id": "cust-auto",
+            "name": "Auto Seed",
+            "rewards_status": "Silver",
+            "loyalty_score": 500,
+            "loyalty_goal": 1000,
+            "curbside_preferred": False,
+            "bluetooth_devices": [{"mac": "11-22-33-44-55-66", "label": "Truck"}],
+            "favorite_items": [],
+            "usual_order": [],
+            "suggested_sales": [],
+            "suggestions": [],
+            "last_visit_iso": "2026-04-01T10:00:00-05:00",
+        }]
+    }))
+
+    repo = CRMRepository(db_path, seed_path=seed_file)
+
+    profile = repo.get_customer_by_mac("11:22:33:44:55:66")
+    assert profile is not None
+    assert profile.name == "Auto Seed"
+
+
+def test_auto_seed_skipped_when_tables_exist(tmp_path):
+    db_path = seed_tmp_db(tmp_path)
+    seed_file = tmp_path / "crm_seed.json"
+    seed_file.write_text(json.dumps({"customers": []}))
+
+    repo = CRMRepository(db_path, seed_path=seed_file)
+
+    profiles = repo.list_customers()
+    assert len(profiles) == 1  # original data preserved, not overwritten
