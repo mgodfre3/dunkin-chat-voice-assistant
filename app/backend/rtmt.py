@@ -269,10 +269,13 @@ class RTMiddleTier:
                         else:
                             logger.warning("Unexpected message type from client: %s", msg.type)
                     
-                    # Means it is gracefully closed by the client then time to close the target_ws
-                    if target_ws:
+                    # Client disconnected — close Azure OpenAI connection quickly
+                    if target_ws and not target_ws.closed:
                         logger.info("Closing OpenAI's realtime socket connection.")
-                        await target_ws.close()
+                        try:
+                            await asyncio.wait_for(target_ws.close(), timeout=3)
+                        except asyncio.TimeoutError:
+                            logger.warning("Timed out closing Azure OpenAI connection")
                         
                 async def from_server_to_client():
                     async for msg in target_ws:

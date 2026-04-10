@@ -54,4 +54,4 @@ RUN python /tmp/ingest_menu_local.py && rm /tmp/ingest_menu_local.py
 # Copy the freshly-built frontend assets
 COPY --from=build-stage /workspace/backend/static /app/static
 
-CMD ["python3", "-m", "gunicorn", "app:create_app", "-b", "0.0.0.0:8000", "--worker-class", "aiohttp.GunicornWebWorker"]
+CMD ["python3", "-m", "gunicorn", "app:create_app", "-b", "0.0.0.0:8000", "--worker-class", "aiohttp.GunicornWebWorker", "--timeout", "120", "--graceful-timeout", "30", "--keep-alive", "65"]
