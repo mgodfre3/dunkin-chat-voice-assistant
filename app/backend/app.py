@@ -41,7 +41,7 @@ async def create_app() -> web.Application:
         logger.info("Running in development mode; loading values from .env")
         load_dotenv()
 
-    use_local = _get_bool_env("USE_LOCAL_PIPELINE", True)
+    use_local = _get_bool_env("USE_LOCAL_PIPELINE", False)
 
     app = web.Application()
 
