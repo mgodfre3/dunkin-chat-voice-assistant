@@ -29,6 +29,7 @@ spec:
       containers:
         - name: dunkin-voice
           image: cadunkinacr.azurecr.io/dunkin-voice-assistant:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
           securityContext:
