@@ -10,7 +10,7 @@ A Dunkin' Donuts voice ordering assistant running as a **Hybrid-Edge Deployment*
 | **Menu Search** | ChromaDB vector database with ONNX MiniLM-L6-v2 embeddings, baked into the container | Edge |
 | **Infrastructure** | AKS Arc on Azure Local (on-premises Kubernetes) | Edge |
 | **GitOps** | Flux v2 — syncs deployment manifests from GitHub | Edge |
-| **Container** | Optimized 383 MB slim image (down from 8.9 GB original) | Edge |
+| **Application** | Single backend container behind NGINX ingress | Edge |
 
 ## Table of Contents
 
@@ -22,6 +22,7 @@ A Dunkin' Donuts voice ordering assistant running as a **Hybrid-Edge Deployment*
 - [Running the App Locally](#running-the-app-locally)
 - [Deploying to Azure Local (Edge)](#deploying-to-azure-local-edge)
 - [Demo Guide](#demo-guide)
+- [Demo Cheat Sheet](#demo-cheat-sheet)
 - [Contributing](#contributing)
 - [Resources](#resources)
 
@@ -29,14 +30,14 @@ A Dunkin' Donuts voice ordering assistant running as a **Hybrid-Edge Deployment*
 
 ```mermaid
 graph LR
-    Browser["🎤 Browser"] -->|"HTTPS (wss://)"| Nginx["🔒 Nginx TLS<br/>Sidecar"]
-    Nginx -->|HTTP| Backend["🐍 Python Backend<br/>(aiohttp)"]
+    Browser["🎤 Browser"] -->|"HTTPS (wss://)"| Ingress["🔒 NGINX Ingress<br/>WebSocket upgrade"]
+    Ingress -->|HTTP| Backend["🐍 Python Backend<br/>(aiohttp)"]
     Backend -->|"WebSocket"| AzureOAI["☁️ Azure OpenAI<br/>GPT-4o Realtime"]
     Backend -->|Query| ChromaDB["📦 ChromaDB<br/>(Local Vector DB)"]
     Backend -->|Read| Menu["📋 Menu Data<br/>(Local JSON)"]
 
     subgraph "Azure Local Edge (On-Premises)"
-        Nginx
+        Ingress
         Backend
         ChromaDB
         Menu
@@ -47,7 +48,7 @@ graph LR
     end
 ```
 
-**Data flow:** The browser opens a WebSocket over HTTPS (terminated by an nginx TLS sidecar). The Python backend streams audio bi-directionally with Azure OpenAI's Realtime API for speech-to-text, reasoning, and text-to-speech. When the model needs menu information it calls a tool function; the backend queries ChromaDB locally and returns results — menu data never leaves the edge.
+**Data flow:** The browser opens a WebSocket over HTTPS through the NGINX ingress, which preserves the upgrade headers required for realtime streaming. The Python backend streams audio bi-directionally with Azure OpenAI's Realtime API for speech-to-text, reasoning, and text-to-speech. When the model needs menu information it calls a tool function; the backend queries ChromaDB locally and returns results — menu data never leaves the edge.
 
 ## Features
 
@@ -74,7 +75,7 @@ The `USE_LOCAL_PIPELINE` environment variable toggles between two modes:
 | **Hybrid (default)** | `false` | Azure OpenAI Realtime (cloud) | ChromaDB (local) | ~200 ms |
 | **Fully-local** | `true` | Foundry Local + Whisper + Piper TTS (edge) | ChromaDB (local) | ~10–20 s |
 
-The hybrid mode is recommended for production. The fully-local mode is available for air-gapped scenarios but has significantly higher latency due to edge compute constraints.
+The hybrid mode is recommended for production and is the active GitOps deployment in this repository. The fully-local mode is available for air-gapped scenarios, but the optional Whisper and Piper workloads are not enabled in the default Flux app kustomization and latency is significantly higher due to edge compute constraints.
 
 ## Getting Started
 
@@ -148,6 +149,12 @@ Flux watches this repository and automatically reconciles changes to the cluster
 ## Demo Guide
 
 See [docs/demo-guide.md](docs/demo-guide.md) for a walkthrough of the live demo at <https://dunkin.adaptivecloudlab.com>.
+
+## Demo Cheat Sheet
+
+Use [docs/demo-cheat-sheet.md](docs/demo-cheat-sheet.md) for presenter-ready 30-second, 2-minute, and 5-minute scripts, plus live commands and likely audience questions.
+
+For a fully-local architecture view centered on Foundry Local, see [docs/foundry-local-architecture.md](docs/foundry-local-architecture.md).
 
 ## License
 
