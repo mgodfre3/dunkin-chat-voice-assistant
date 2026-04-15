@@ -16,6 +16,8 @@ spec:
     metadata:
       labels:
         app: dunkin-voice-assistant
+      annotations:
+        rollout-trigger: "2026-04-15T20-12"
     spec:
       automountServiceAccountToken: false
       tolerations:
