@@ -91,14 +91,19 @@ class DriveThruSimulator:
         for _ in range(min(self._max_cars, 3)):
             await self.spawn_car()
 
+    def _spawn_car_locked(self, mac_address: str | None = None, profile: CustomerProfile | None = None) -> DriveThruCar:
+        """Create and register a new car. Caller MUST already hold ``self._lock``."""
+        car = DriveThruCar(car_id=_next_car_id(), mac_address=mac_address)
+        if profile:
+            car.crm_customer_id = profile.id
+            car.crm_summary = _profile_snapshot(profile)
+        self._cars.append(car)
+        self._trim_cars()
+        return car
+
     async def spawn_car(self, mac_address: str | None = None, profile: CustomerProfile | None = None) -> DriveThruCar:
         async with self._lock:
-            car = DriveThruCar(car_id=_next_car_id(), mac_address=mac_address)
-            if profile:
-                car.crm_customer_id = profile.id
-                car.crm_summary = _profile_snapshot(profile)
-            self._cars.append(car)
-            self._trim_cars()
+            car = self._spawn_car_locked(mac_address, profile)
             await self._broadcast_snapshot("car.arrived")
             return car
 
@@ -106,7 +111,7 @@ class DriveThruSimulator:
         async with self._lock:
             car = next((c for c in self._cars if c.session_id is None and c.status != DriveThruStatus.COMPLETE), None)
             if car is None:
-                car = await self.spawn_car()
+                car = self._spawn_car_locked()
             car.session_id = session_id
             self._cars_by_session[session_id] = car
             car.status = DriveThruStatus.ORDERING
