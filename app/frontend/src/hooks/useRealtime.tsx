@@ -1,4 +1,5 @@
-import useWebSocket from "react-use-websocket";
+import { useState } from "react";
+import useWebSocket, { ReadyState } from "react-use-websocket";
 
 import {
     InputAudioBufferAppendCommand,
@@ -14,6 +15,8 @@ import {
     ExtensionRoundTripToken,
     ExtensionCustomerGreeting
 } from "@/types";
+
+export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "error";
 
 type Parameters = {
     useDirectAoaiApi?: boolean; // If true, the middle tier will be skipped and the AOAI ws API will be called directly
@@ -61,16 +64,28 @@ export default function useRealTime({
     onReceivedCustomerGreeting
 }: Parameters) {
     const wsEndpoint = useDirectAoaiApi
-        ? `${aoaiEndpointOverride}/openai/realtime?api-key=${aoaiApiKeyOverride}&deployment=${aoaiModelOverride}&api-version=2024-10-01-preview`
+        ? `${aoaiEndpointOverride}/openai/realtime?api-key=${aoaiApiKeyOverride}&deployment=${aoaiModelOverride}&api-version=2025-04-01-preview`
         : `/realtime`;
 
-    const { sendJsonMessage } = useWebSocket(wsEndpoint, {
-        onOpen: () => onWebSocketOpen?.(),
+    const [hasConnectedOnce, setHasConnectedOnce] = useState(false);
+
+    const { sendJsonMessage, readyState } = useWebSocket(wsEndpoint, {
+        onOpen: () => {
+            setHasConnectedOnce(true);
+            onWebSocketOpen?.();
+        },
         onClose: () => onWebSocketClose?.(),
         onError: event => onWebSocketError?.(event),
         onMessage: event => onMessageReceived(event),
         shouldReconnect: () => true
     });
+
+    const connectionStatus: ConnectionStatus =
+        readyState === ReadyState.OPEN
+            ? "connected"
+            : readyState === ReadyState.CONNECTING
+              ? hasConnectedOnce ? "reconnecting" : "connecting"
+              : "error";
 
     const startSession = (metadata?: Record<string, unknown>) => {
         const command: SessionUpdateCommand = {
@@ -160,5 +175,5 @@ export default function useRealTime({
         }
     };
 
-    return { startSession, addUserAudio, inputAudioBufferClear };
+    return { startSession, addUserAudio, inputAudioBufferClear, connectionStatus };
 }

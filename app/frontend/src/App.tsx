@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Mic, MicOff, Menu, MessageSquare, LogOut, Github } from "lucide-react";
+import { Mic, MicOff, Menu, MessageSquare, LogOut, Github, WifiOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Card } from "@/components/ui/card";
@@ -70,6 +70,7 @@ function CoffeeApp() {
     const { logout, authEnabled } = useAuth();
 
     const [transcripts, setTranscripts] = useState<Array<{ text: string; isUser: boolean; timestamp: Date }>>([]);
+    const [connectionError, setConnectionError] = useState<string | null>(null);
     const dummyTranscripts = useMemo<Array<{ text: string; isUser: boolean; timestamp: Date }>>(
         () =>
             dummyTranscriptsData.map(transcript => ({
@@ -127,9 +128,15 @@ function CoffeeApp() {
 
     const realtime = useRealTime({
         enableInputAudioTranscription: true,
-        onWebSocketOpen: () => console.log("WebSocket connection opened"),
+        onWebSocketOpen: () => {
+            console.log("WebSocket connection opened");
+            setConnectionError(null);
+        },
         onWebSocketClose: () => console.log("WebSocket connection closed"),
-        onWebSocketError: event => console.error("WebSocket error:", event),
+        onWebSocketError: event => {
+            console.error("WebSocket error:", event);
+            setConnectionError("Connection to voice service lost. Reconnecting…");
+        },
         onReceivedError: message => console.error("error", message),
         onReceivedResponseAudioDelta: message => {
             if (!isSessionActiveRef.current) return;
@@ -187,9 +194,14 @@ function CoffeeApp() {
 
                         if (!isSessionActiveRef.current) return;
                         await startAudioRecording();
-                    })().finally(() => {
-                        startMicInFlightRef.current = null;
-                    });
+                    })()
+                        .catch(err => {
+                            console.error("Mic start failed after greeting:", err);
+                            setConnectionError("Microphone access denied or unavailable.");
+                        })
+                        .finally(() => {
+                            startMicInFlightRef.current = null;
+                        });
                 }
             }
         }
@@ -240,19 +252,37 @@ function CoffeeApp() {
         if (!isRecording) {
             setSessionIdentifiers(null);
             setCustomerGreeting(null);
+            setConnectionError(null);
 
             // Start session and playback immediately, but delay mic capture until the greeting finishes.
             isSessionActiveRef.current = true;
             awaitingGreetingDoneRef.current = !useAzureSpeechOn;
             greetingAudioSeenRef.current = false;
 
-            await resetAudioPlayer();
+            try {
+                await resetAudioPlayer();
+            } catch (err) {
+                console.error("Audio player init failed:", err);
+                // Continue — audio output degraded but session can still work
+            }
 
             if (useAzureSpeechOn) {
                 // AzureSpeech mode doesn't play a synthesized greeting audio stream.
                 azureSpeech.startSession();
-                await startAudioRecording();
+                try {
+                    await startAudioRecording();
+                } catch (err) {
+                    console.error("Mic start failed:", err);
+                    setConnectionError("Microphone access denied or unavailable.");
+                    isSessionActiveRef.current = false;
+                    return;
+                }
             } else {
+                if (realtime.connectionStatus !== "connected") {
+                    setConnectionError("Not connected to voice service. Please wait and try again.");
+                    isSessionActiveRef.current = false;
+                    return;
+                }
                 realtime.startSession(selectedDeviceMac ? { deviceMac: selectedDeviceMac } : undefined);
 
                 // Safety: if we never receive the greeting completion, start the mic after a short timeout.
@@ -261,9 +291,14 @@ function CoffeeApp() {
                     if (!awaitingGreetingDoneRef.current) return;
                     awaitingGreetingDoneRef.current = false;
                     if (startMicInFlightRef.current) return;
-                    startMicInFlightRef.current = startAudioRecording().finally(() => {
-                        startMicInFlightRef.current = null;
-                    });
+                    startMicInFlightRef.current = startAudioRecording()
+                        .catch(err => {
+                            console.error("Mic start failed (timeout fallback):", err);
+                            setConnectionError("Microphone access denied or unavailable.");
+                        })
+                        .finally(() => {
+                            startMicInFlightRef.current = null;
+                        });
                 }, 5000);
             }
 
@@ -325,6 +360,24 @@ function CoffeeApp() {
                 </div>
 
                 {sessionIdentifiers && showSessionTokens && <SessionTokenBanner identifiers={sessionIdentifiers} />}
+
+                {connectionError && (
+                    <div className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+                        <WifiOff className="h-4 w-4 flex-shrink-0" />
+                        <span>{connectionError}</span>
+                    </div>
+                )}
+
+                {!useAzureSpeechOn && realtime.connectionStatus !== "connected" && !connectionError && (
+                    <div className="flex items-center gap-2 rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-2 text-sm text-yellow-700">
+                        <WifiOff className="h-4 w-4 flex-shrink-0" />
+                        <span>
+                            {realtime.connectionStatus === "connecting" && "Connecting to voice service…"}
+                            {realtime.connectionStatus === "reconnecting" && "Reconnecting to voice service…"}
+                            {realtime.connectionStatus === "error" && "Voice service unavailable"}
+                        </span>
+                    </div>
+                )}
 
                 <BrandHero />
 

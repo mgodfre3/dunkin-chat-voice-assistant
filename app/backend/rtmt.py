@@ -68,7 +68,7 @@ class RTMiddleTier:
     max_tokens: int | None = None
     disable_audio: bool | None = None
     voice_choice: str | None = None
-    api_version: str = "2024-10-01-preview"
+    api_version: str = "2025-04-01-preview"
 
     def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, voice_choice: str | None = None):
         self.endpoint = endpoint
@@ -233,17 +233,23 @@ class RTMiddleTier:
             if "x-ms-client-request-id" in ws.headers:
                 headers["x-ms-client-request-id"] = ws.headers["x-ms-client-request-id"]
             if self.key is not None:
-                headers = { "api-key": self.key }
+                headers["api-key"] = self.key
             else:
-                headers = { "Authorization": f"Bearer {self._token_provider()}" } # NOTE: no async version of token provider, maybe refresh token on a timer?
+                headers["Authorization"] = f"Bearer {self._token_provider()}"
             async with session.ws_connect("/openai/realtime", headers=headers, params=params) as target_ws:
                 session_id = self._session_map.get(ws)
                 greeting_sent = session_id in self._sent_greeting
+                session_configured = asyncio.Event()
 
                 async def send_greeting_once():
                     nonlocal greeting_sent
                     if greeting_sent:
                         return
+                    # Wait until Azure confirms session configuration before sending greeting
+                    try:
+                        await asyncio.wait_for(session_configured.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("Timed out waiting for session.updated; sending greeting anyway")
                     await target_ws.send_json({
                         "type": "conversation.item.create",
                         "item": {
@@ -258,14 +264,18 @@ class RTMiddleTier:
                     greeting_sent = True
                     if session_id is not None:
                         self._sent_greeting.add(session_id)
+
                 async def from_client_to_server():
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
-                            if not greeting_sent:
-                                await send_greeting_once()
                             new_msg = await self._process_message_to_server(msg, ws)
                             if new_msg is not None:
                                 await target_ws.send_str(new_msg)
+                            # Send greeting after session.update is forwarded
+                            if not greeting_sent:
+                                message = json.loads(msg.data)
+                                if message.get("type") == "session.update":
+                                    await send_greeting_once()
                         else:
                             logger.warning("Unexpected message type from client: %s", msg.type)
                     
@@ -280,6 +290,10 @@ class RTMiddleTier:
                 async def from_server_to_client():
                     async for msg in target_ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
+                            message = json.loads(msg.data)
+                            # Signal when Azure confirms session configuration
+                            if message.get("type") == "session.updated":
+                                session_configured.set()
                             new_msg = await self._process_message_to_client(msg, ws, target_ws)
                             if new_msg is not None:
                                 if ws.closed:
