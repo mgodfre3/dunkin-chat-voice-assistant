@@ -68,7 +68,7 @@ class RTMiddleTier:
     max_tokens: int | None = None
     disable_audio: bool | None = None
     voice_choice: str | None = None
-    api_version: str = "2025-04-01-preview"
+    api_version: str = "2024-10-01-preview"
 
     def __init__(self, endpoint: str, deployment: str, credentials: AzureKeyCredential | DefaultAzureCredential, voice_choice: str | None = None):
         self.endpoint = endpoint
@@ -126,6 +126,9 @@ class RTMiddleTier:
                     if session_id is not None:
                         identifiers = order_state_singleton.get_session_identifiers(session_id)
                         await self._emit_session_identifiers(client_ws, "extension.session_metadata", identifiers)
+
+                case "error":
+                    logger.error("Azure OpenAI error: %s", message.get("error", message))
 
                 case "response.output_item.added":
                     if "item" in message and message["item"]["type"] == "function_call":
