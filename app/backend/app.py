@@ -127,8 +127,19 @@ async def create_app() -> web.Application:
         chroma_collection=chroma_collection,
         order_observer=_order_observer,
     )
-
+
     rtmt.attach_to_app(app, "/realtime", simulator=simulator, crm_repo=crm_repo)
+
+    async def _health_check(_request: web.Request) -> web.Response:
+        """Health endpoint for K8s probes and deployment diagnostics."""
+        return web.json_response({
+            "status": "healthy",
+            "pipeline": "local" if use_local else "azure-realtime",
+            "deployment": llm_deployment if not use_local else None,
+            "api_version": rtmt.api_version if not use_local else None,
+        })
+
+    app.router.add_get("/health", _health_check)
 
     app.router.add_get("/crm/customers", _handle_list_customers)
     app.router.add_get("/crm/customers/{customer_id}", _handle_get_customer)

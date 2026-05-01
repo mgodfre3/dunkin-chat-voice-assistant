@@ -137,7 +137,11 @@ function CoffeeApp() {
             console.error("WebSocket error:", event);
             setConnectionError("Connection to voice service lost. Reconnecting…");
         },
-        onReceivedError: message => console.error("error", message),
+        onReceivedError: message => {
+            console.error("Voice service error:", message);
+            const errorMsg = (message as any)?.error?.message || "Voice service encountered an error.";
+            setConnectionError(errorMsg);
+        },
         onReceivedResponseAudioDelta: message => {
             if (!isSessionActiveRef.current) return;
             greetingAudioSeenRef.current = true;

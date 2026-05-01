@@ -236,8 +236,20 @@ class RTMiddleTier:
         return updated_message
 
     async def _forward_messages(self, ws: web.WebSocketResponse):
-        async with aiohttp.ClientSession(base_url=self.endpoint) as session:
-            params = { "api-version": self.api_version, "deployment": self.deployment}
+        session_id = self._session_map.get(ws)
+
+        # --- Lazy Azure connection: only connect when client sends session.update ---
+        # This prevents idle Azure connections that timeout after ~15 min.
+        target_ws: aiohttp.ClientWebSocketResponse | None = None
+        http_session: aiohttp.ClientSession | None = None
+        session_configured = asyncio.Event()
+        greeting_sent = session_id in self._sent_greeting
+        tools_pending: dict[str, RTToolCall] = {}
+        keepalive_task: asyncio.Task | None = None
+
+        async def connect_to_azure():
+            nonlocal target_ws, http_session, keepalive_task
+            params = {"api-version": self.api_version, "deployment": self.deployment}
             headers = {}
             if "x-ms-client-request-id" in ws.headers:
                 headers["x-ms-client-request-id"] = ws.headers["x-ms-client-request-id"]
@@ -245,94 +257,154 @@ class RTMiddleTier:
                 headers["api-key"] = self.key
             else:
                 headers["Authorization"] = f"Bearer {self._token_provider()}"
-            async with session.ws_connect("/openai/realtime", headers=headers, params=params) as target_ws:
-                session_id = self._session_map.get(ws)
-                greeting_sent = session_id in self._sent_greeting
-                session_configured = asyncio.Event()
-                # Per-connection tool call tracking (avoids cross-session interference)
-                tools_pending: dict[str, RTToolCall] = {}
 
-                async def send_greeting_once():
-                    nonlocal greeting_sent
-                    if greeting_sent:
-                        return
-                    # Wait until Azure confirms session configuration before sending greeting
-                    try:
-                        await asyncio.wait_for(session_configured.wait(), timeout=5.0)
-                    except asyncio.TimeoutError:
-                        logger.warning("Timed out waiting for session.updated; sending greeting anyway")
-                    await target_ws.send_json({
-                        "type": "conversation.item.create",
-                        "item": {
-                            "type": "message",
-                            "role": "user",
-                            "content": [
-                                {"type": "input_text", "text": "Please greet the guest with: 'Welcome to Dunkin! How may I help you today?'"}
-                            ]
-                        }
-                    })
-                    await target_ws.send_json({"type": "response.create"})
-                    greeting_sent = True
-                    if session_id is not None:
-                        self._sent_greeting.add(session_id)
+            http_session = aiohttp.ClientSession(base_url=self.endpoint)
+            target_ws = await http_session.ws_connect(
+                "/openai/realtime", headers=headers, params=params
+            )
+            logger.info("Connected to Azure OpenAI Realtime (session=%s)", session_id)
+            keepalive_task = asyncio.create_task(_keepalive())
 
-                async def from_client_to_server():
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            new_msg = await self._process_message_to_server(msg, ws)
-                            if new_msg is not None:
-                                await target_ws.send_str(new_msg)
-                            # Send greeting after session.update is forwarded
-                            if not greeting_sent:
-                                message = json.loads(msg.data)
-                                if message.get("type") == "session.update":
-                                    await send_greeting_once()
-                        else:
-                            logger.warning("Unexpected message type from client: %s", msg.type)
-                    
-                    # Client disconnected — close Azure OpenAI connection quickly
+        async def _keepalive():
+            """Send periodic pings to keep the Azure connection alive."""
+            try:
+                while target_ws and not target_ws.closed:
+                    await asyncio.sleep(25)
                     if target_ws and not target_ws.closed:
-                        logger.info("Closing OpenAI's realtime socket connection.")
-                        try:
-                            await asyncio.wait_for(target_ws.close(), timeout=3)
-                        except asyncio.TimeoutError:
-                            logger.warning("Timed out closing Azure OpenAI connection")
-                        
-                async def from_server_to_client():
-                    async for msg in target_ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            message = json.loads(msg.data)
-                            # Signal when Azure confirms session configuration
-                            if message.get("type") == "session.updated":
-                                session_configured.set()
-                            new_msg = await self._process_message_to_client(msg, ws, target_ws, tools_pending)
-                            if new_msg is not None:
-                                if ws.closed:
-                                    break
-                                await ws.send_str(new_msg)
-                        else:
-                            logger.warning("Unexpected message type from server: %s", msg.type)
+                        await target_ws.ping()
+            except (ConnectionResetError, ConnectionError, asyncio.CancelledError):
+                pass
+            except Exception:
+                logger.debug("Keepalive ping failed", exc_info=True)
 
+        async def send_greeting_once():
+            nonlocal greeting_sent
+            if greeting_sent or target_ws is None:
+                return
+            try:
+                await asyncio.wait_for(session_configured.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Timed out waiting for session.updated; sending greeting anyway")
+            await target_ws.send_json({
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Please greet the guest with: 'Welcome to Dunkin! How may I help you today?'"}
+                    ]
+                }
+            })
+            await target_ws.send_json({"type": "response.create"})
+            greeting_sent = True
+            if session_id is not None:
+                self._sent_greeting.add(session_id)
+
+        azure_connected = asyncio.Event()
+        client_done = asyncio.Event()
+
+        async def from_client_to_server():
+            nonlocal target_ws
+            try:
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        message = json.loads(msg.data)
+
+                        # Lazily connect to Azure on first session.update
+                        if target_ws is None:
+                            if message.get("type") != "session.update":
+                                continue  # Drop non-session.update messages before Azure is connected
+                            try:
+                                await connect_to_azure()
+                                azure_connected.set()
+                            except Exception as e:
+                                logger.exception("Failed to connect to Azure OpenAI")
+                                await ws.send_json({
+                                    "type": "error",
+                                    "error": {"message": f"Failed to connect to voice service: {e}", "type": "connection_error"}
+                                })
+                                return
+
+                        new_msg = await self._process_message_to_server(msg, ws)
+                        if new_msg is not None:
+                            if target_ws.closed:
+                                await ws.send_json({
+                                    "type": "error",
+                                    "error": {"message": "Voice service connection lost. Please try again.", "type": "connection_error"}
+                                })
+                                return
+                            await target_ws.send_str(new_msg)
+
+                        # Send greeting after session.update is forwarded
+                        if not greeting_sent and message.get("type") == "session.update":
+                            await send_greeting_once()
+                    else:
+                        logger.warning("Unexpected message type from client: %s", msg.type)
+            finally:
+                client_done.set()
+
+            # Client disconnected — close Azure connection
+            if target_ws and not target_ws.closed:
+                logger.info("Client disconnected; closing Azure connection (session=%s)", session_id)
                 try:
-                    await asyncio.gather(from_client_to_server(), from_server_to_client())
-                except (ConnectionResetError, ConnectionError,
-                        aiohttp.ClientError, asyncio.CancelledError):
-                    # Ignore errors from the client disconnecting (e.g. browser refresh)
-                    pass
-                except Exception:
-                    logger.exception("Unexpected error in realtime message forwarding")
+                    await asyncio.wait_for(target_ws.close(), timeout=3)
+                except asyncio.TimeoutError:
+                    logger.warning("Timed out closing Azure OpenAI connection")
 
-                finally:
-                    if session_id is not None:
-                        if self._simulator is not None:
-                            await self._simulator.complete_session(session_id)
-                        order_state_singleton.delete_session(session_id)
-                        self._session_metadata.pop(session_id, None)
-                        self._session_customer_sent.discard(session_id)
-                        self._sent_greeting.discard(session_id)
-                    # Clean up the session map when the connection is closed
-                    if ws in self._session_map:
-                        del self._session_map[ws]
+        async def from_server_to_client():
+            # Wait until Azure is connected OR client exits without connecting
+            wait_azure = asyncio.create_task(azure_connected.wait())
+            wait_done = asyncio.create_task(client_done.wait())
+            done, pending = await asyncio.wait(
+                [wait_azure, wait_done], return_when=asyncio.FIRST_COMPLETED
+            )
+            for t in pending:
+                t.cancel()
+            if client_done.is_set() and not azure_connected.is_set():
+                return  # Client left before Azure was connected
+
+            async for msg in target_ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    message = json.loads(msg.data)
+                    if message.get("type") == "session.updated":
+                        session_configured.set()
+                    new_msg = await self._process_message_to_client(msg, ws, target_ws, tools_pending)
+                    if new_msg is not None:
+                        if ws.closed:
+                            break
+                        await ws.send_str(new_msg)
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    logger.warning("Azure WebSocket closed/error (session=%s): %s", session_id, msg.data)
+                    if not ws.closed:
+                        await ws.send_json({
+                            "type": "error",
+                            "error": {"message": "Voice service disconnected unexpectedly.", "type": "connection_error"}
+                        })
+                    break
+
+        try:
+            await asyncio.gather(from_client_to_server(), from_server_to_client())
+        except (ConnectionResetError, ConnectionError,
+                aiohttp.ClientError, asyncio.CancelledError):
+            pass
+        except Exception:
+            logger.exception("Unexpected error in realtime message forwarding (session=%s)", session_id)
+        finally:
+            if keepalive_task:
+                keepalive_task.cancel()
+            if target_ws and not target_ws.closed:
+                await target_ws.close()
+            if http_session and not http_session.closed:
+                await http_session.close()
+            if session_id is not None:
+                if self._simulator is not None:
+                    await self._simulator.complete_session(session_id)
+                order_state_singleton.delete_session(session_id)
+                self._session_metadata.pop(session_id, None)
+                self._session_customer_sent.discard(session_id)
+                self._sent_greeting.discard(session_id)
+            if ws in self._session_map:
+                del self._session_map[ws]
 
     async def _websocket_handler(self, request: web.Request):
         ws = web.WebSocketResponse()
