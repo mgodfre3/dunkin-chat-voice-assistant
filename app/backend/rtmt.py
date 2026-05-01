@@ -75,7 +75,6 @@ class RTMiddleTier:
         self.deployment = deployment
         self.voice_choice = voice_choice
         self.tools = {}
-        self._tools_pending: dict[str, RTToolCall] = {}
         self._token_provider = None
         self._session_map: dict[web.WebSocketResponse, str] = {}
         self._sent_greeting: set[str] = set()
@@ -108,7 +107,7 @@ class RTMiddleTier:
             }
         )
 
-    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse) -> str | None:
+    async def _process_message_to_client(self, msg: str, client_ws: web.WebSocketResponse, server_ws: web.WebSocketResponse, tools_pending: dict[str, RTToolCall]) -> str | None:
         message = json.loads(msg.data)
         updated_message = msg.data
         session_id = self._session_map.get(client_ws)
@@ -135,8 +134,8 @@ class RTMiddleTier:
                 case "conversation.item.created":
                     if "item" in message and message["item"]["type"] == "function_call":
                         item = message["item"]
-                        if item["call_id"] not in self._tools_pending:
-                            self._tools_pending[item["call_id"]] = RTToolCall(item["call_id"], message["previous_item_id"])
+                        if item["call_id"] not in tools_pending:
+                            tools_pending[item["call_id"]] = RTToolCall(item["call_id"], message["previous_item_id"])
                         updated_message = None
                     elif "item" in message and message["item"]["type"] == "function_call_output":
                         updated_message = None
@@ -150,8 +149,17 @@ class RTMiddleTier:
                 case "response.output_item.done":
                     if "item" in message and message["item"]["type"] == "function_call":
                         item = message["item"]
-                        tool_call = self._tools_pending[message["item"]["call_id"]]
-                        tool = self.tools[item["name"]]
+                        call_id = item["call_id"]
+                        tool_call = tools_pending.get(call_id)
+                        if tool_call is None:
+                            logger.error("Tool call %s not found in pending (already cleared?)", call_id)
+                            updated_message = None
+                            return updated_message
+                        tool = self.tools.get(item["name"])
+                        if tool is None:
+                            logger.error("Unknown tool: %s", item["name"])
+                            updated_message = None
+                            return updated_message
                         args = item["arguments"]
                         if item["name"] in ["update_order", "get_order"]:
                             result = await tool.target(json.loads(args), session_id)
@@ -161,13 +169,11 @@ class RTMiddleTier:
                             "type": "conversation.item.create",
                             "item": {
                                 "type": "function_call_output",
-                                "call_id": item["call_id"],
+                                "call_id": call_id,
                                 "output": result.to_text() if result.destination == ToolResultDirection.TO_SERVER else ""
                             }
                         })
                         if result.destination == ToolResultDirection.TO_CLIENT:
-                            # TODO: this will break clients that don't know about this extra message, rewrite 
-                            # this to be a regular text message with a special marker of some sort
                             await client_ws.send_json({
                                 "type": "extension.middle_tier_tool_response",
                                 "previous_item_id": tool_call.previous_id,
@@ -177,8 +183,8 @@ class RTMiddleTier:
                         updated_message = None
 
                 case "response.done":
-                    if len(self._tools_pending) > 0:
-                        self._tools_pending.clear() # Any chance tool calls could be interleaved across different outstanding responses?
+                    if len(tools_pending) > 0:
+                        tools_pending.clear()
                         await server_ws.send_json({
                             "type": "response.create"
                         })
@@ -240,6 +246,8 @@ class RTMiddleTier:
                 session_id = self._session_map.get(ws)
                 greeting_sent = session_id in self._sent_greeting
                 session_configured = asyncio.Event()
+                # Per-connection tool call tracking (avoids cross-session interference)
+                tools_pending: dict[str, RTToolCall] = {}
 
                 async def send_greeting_once():
                     nonlocal greeting_sent
@@ -294,7 +302,7 @@ class RTMiddleTier:
                             # Signal when Azure confirms session configuration
                             if message.get("type") == "session.updated":
                                 session_configured.set()
-                            new_msg = await self._process_message_to_client(msg, ws, target_ws)
+                            new_msg = await self._process_message_to_client(msg, ws, target_ws, tools_pending)
                             if new_msg is not None:
                                 if ws.closed:
                                     break
@@ -318,6 +326,7 @@ class RTMiddleTier:
                         order_state_singleton.delete_session(session_id)
                         self._session_metadata.pop(session_id, None)
                         self._session_customer_sent.discard(session_id)
+                        self._sent_greeting.discard(session_id)
                     # Clean up the session map when the connection is closed
                     if ws in self._session_map:
                         del self._session_map[ws]
